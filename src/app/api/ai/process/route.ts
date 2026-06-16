@@ -63,6 +63,17 @@ async function processAI() {
     const finalResult = [];
 
     for (const [sessionId, sessionQuestions] of sessionMap.entries()) {
+      let personality = "";
+      let language = "pt-BR";
+      
+      const { data: sessionData } = await supabase.from('sessions').select('event_id').eq('id', sessionId).single();
+      if (sessionData && sessionData.event_id) {
+        const { data: eventData } = await supabase.from('events').select('personality, language').eq('id', sessionData.event_id).single();
+        if (eventData) {
+          personality = eventData.personality || "";
+          language = eventData.language || "pt-BR";
+        }
+      }
       
       const inputForAI = sessionQuestions.map((q) => `ID:${q.id}|${q.author_name ? 'De:' + q.author_name + '|' : ''}Q:${q.content}`).join('\n');
 
@@ -80,8 +91,11 @@ async function processAI() {
    - A pergunta refinada (clara, profissional e impactante).
    - Um contexto breve explicando por que a pergunta é relevante para o tema.
    - Uma sugestão de resposta clara e concisa (máx 3-5 frases).
-   - Uma frase de transição natural para o palestrante falar antes de responder (Ex: "Essa é uma excelente pergunta...").
-Regras: Mantenha o tom profissional e natural (PT-BR). Evite respostas genéricas e seja conciso.`
+   - Uma frase de transição natural para o palestrante falar antes de responder.
+Regras: 
+- Mantenha o tom e o idioma da resposta rigidamente como: ${language}.
+- ${personality ? 'Personalidade obrigatória: ' + personality : 'Mantenha um tom profissional e natural.'}
+- Evite respostas genéricas e seja conciso.`
           },
           {
             role: "user",

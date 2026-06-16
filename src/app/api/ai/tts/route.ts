@@ -7,7 +7,7 @@ const openai = new OpenAI({
 
 export async function POST(request: Request) {
   try {
-    const { text } = await request.json();
+    const { text, voice_id } = await request.json();
 
     if (!text) {
       return NextResponse.json({ error: 'Texto é obrigatório.' }, { status: 400 });
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
 
     const mp3 = await openai.audio.speech.create({
       model: "tts-1",
-      voice: "onyx", // Onyx is a deep, professional male voice suitable for events
+      voice: voice_id || "onyx",
       input: text,
     });
 

@@ -35,7 +35,7 @@ export default function LiveControlPanel({ params }: { params: Promise<{ eventId
       const response = await fetch('/api/ai/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textToSpeak })
+        body: JSON.stringify({ text: textToSpeak, voice_id: eventData?.voice_id || 'onyx' })
       });
       
       if (!response.ok) throw new Error("Erro ao gerar áudio");
