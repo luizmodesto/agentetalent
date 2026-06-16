@@ -73,10 +73,15 @@ async function processAI() {
         messages: [
           {
             role: "system",
-            content: `Você é o 'Talent Brain', uma IA diretora de eventos ao vivo. Sua missão é ler as perguntas enviadas pela audiência e:
+            content: `Você é o 'Talent Brain', uma IA diretora de eventos ao vivo e co-host. Sua missão é ler as perguntas enviadas pela audiência e:
 1. Rejeitar mensagens de spam, sem sentido, ou ofensivas.
-2. Agrupar perguntas semelhantes ou com a mesma intenção em 'clusters'.
-3. Para cada cluster, reescrever a pergunta final de forma clara, profissional e impactante para ser lida por um palestrante.`
+2. Agrupar perguntas semelhantes em 'clusters'.
+3. Para cada cluster aprovado, você deve gerar:
+   - A pergunta refinada (clara, profissional e impactante).
+   - Um contexto breve explicando por que a pergunta é relevante para o tema.
+   - Uma sugestão de resposta clara e concisa (máx 3-5 frases).
+   - Uma frase de transição natural para o palestrante falar antes de responder (Ex: "Essa é uma excelente pergunta...").
+Regras: Mantenha o tom profissional e natural (PT-BR). Evite respostas genéricas e seja conciso.`
           },
           {
             role: "user",
@@ -92,21 +97,24 @@ async function processAI() {
               type: "object",
               properties: {
                 rejected_ids: { type: "array", description: "IDs de spam.", items: { type: "string" } },
-                clusters: {
+                approved: {
                   type: "array",
-                  description: "Grupos de perguntas válidas.",
+                  description: "Grupos de perguntas válidas processadas.",
                   items: {
                     type: "object",
                     properties: {
                       original_ids: { type: "array", items: { type: "string" } },
-                      refined_question: { type: "string" }
+                      question: { type: "string" },
+                      context: { type: "string" },
+                      suggested_answer: { type: "string" },
+                      transition: { type: "string" }
                     },
-                    required: ["original_ids", "refined_question"],
+                    required: ["original_ids", "question", "context", "suggested_answer", "transition"],
                     additionalProperties: false
                   }
                 }
               },
-              required: ["rejected_ids", "clusters"],
+              required: ["rejected_ids", "approved"],
               additionalProperties: false
             }
           }
@@ -122,17 +130,20 @@ async function processAI() {
           .in('id', aiResult.rejected_ids);
       }
 
-      for (const cluster of aiResult.clusters) {
-        if (cluster.original_ids.length === 0) continue;
+      for (const item of aiResult.approved) {
+        if (item.original_ids.length === 0) continue;
 
         const { data: newQuestion, error: insertError } = await supabase
           .from('questions')
           .insert({
             session_id: sessionId,
-            content: cluster.refined_question,
+            content: item.question,
+            context: item.context,
+            suggested_answer: item.suggested_answer,
+            transition: item.transition,
             author_name: 'Talent Brain',
             status: 'approved',
-            ai_score: cluster.original_ids.length
+            ai_score: item.original_ids.length
           })
           .select('id')
           .single();
@@ -141,13 +152,13 @@ async function processAI() {
           await supabase
             .from('questions')
             .update({ status: 'processed', parent_id: newQuestion.id })
-            .in('id', cluster.original_ids);
+            .in('id', item.original_ids);
         } else {
-           await supabase.from('questions').update({ status: 'rejected' }).in('id', cluster.original_ids);
+           await supabase.from('questions').update({ status: 'rejected' }).in('id', item.original_ids);
         }
       }
       
-      finalResult.push({ sessionId, processedCount: sessionQuestions.length, clustersGenerated: aiResult.clusters.length });
+      finalResult.push({ sessionId, processedCount: sessionQuestions.length, clustersGenerated: aiResult.approved.length });
     }
 
     return NextResponse.json({ message: 'Processamento Batch concluído!', details: finalResult });
