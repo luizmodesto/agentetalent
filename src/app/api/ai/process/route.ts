@@ -31,12 +31,12 @@ async function processAI() {
       .from('questions')
       .select('id')
       .eq('status', 'pending')
-      .limit(50);
+      .limit(20);
 
     if (fetchError) throw fetchError;
 
-    if (!toProcess || toProcess.length === 0) {
-      return NextResponse.json({ message: 'Nenhuma pergunta pendente no momento.' });
+    if (!toProcess || toProcess.length < 5) {
+      return NextResponse.json({ message: 'Menos de 5 perguntas pendentes, aguardando lote maior para otimizar custos.' });
     }
 
     idsToProcess = toProcess.map(q => q.id);
@@ -46,7 +46,7 @@ async function processAI() {
       .update({ status: 'processing' })
       .in('id', idsToProcess)
       .eq('status', 'pending') 
-      .select('id, content, session_id');
+      .select('id, content, session_id, author_name');
 
     if (lockError) throw lockError;
 
@@ -64,10 +64,12 @@ async function processAI() {
 
     for (const [sessionId, sessionQuestions] of sessionMap.entries()) {
       
-      const inputForAI = sessionQuestions.map((q) => `ID: ${q.id} | Pergunta: ${q.content}`).join('\n');
+      const inputForAI = sessionQuestions.map((q) => `ID:${q.id}|${q.author_name ? 'De:' + q.author_name + '|' : ''}Q:${q.content}`).join('\n');
 
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
+        max_tokens: 1000,
+        temperature: 0.2,
         messages: [
           {
             role: "system",
