@@ -68,7 +68,7 @@ export default function AdminControlPanel({ params }: { params: Promise<{ eventI
         <div>
           <label className="block text-lg font-semibold mb-2">🎭 Personalidade do Co-Host</label>
           <p className="text-sm text-neutral-400 mb-4">
-            Descreva como a inteligência artificial deve se comportar. Ex: "Aja com humor e use gírias jovens", ou "Seja ultra corporativo, focado em diretores executivos".
+            Descreva como a inteligência artificial deve se comportar. Ex: &quot;Aja com humor e use gírias jovens&quot;, ou &quot;Seja ultra corporativo, focado em diretores executivos&quot;.
           </p>
           <textarea 
             className="w-full h-32 bg-neutral-950 border border-neutral-800 rounded-xl p-4 text-white focus:outline-none focus:border-purple-500 transition-colors"

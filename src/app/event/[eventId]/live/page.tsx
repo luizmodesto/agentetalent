@@ -222,7 +222,7 @@ export default function LiveControlPanel({ params }: { params: Promise<{ eventId
                         {q.transition && (
                           <div className="text-sm">
                             <span className="text-emerald-400 font-semibold block mb-1">🗣️ Transição sugerida:</span>
-                            <span className="text-neutral-300 italic">"{q.transition}"</span>
+                            <span className="text-neutral-300 italic">&quot;{q.transition}&quot;</span>
                           </div>
                         )}
                         <div className="flex justify-between items-start">
