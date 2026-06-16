@@ -5,8 +5,6 @@ import OpenAI from 'openai';
 // Inicializa os clientes
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-// Nota: Em um ambiente de produção rigoroso, idealmente usaríamos a SERVICE_ROLE_KEY 
-// para bypass de RLS no backend, mas como o MVP liberou UPDATE anônimo, usaremos a anon key.
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const openai = new OpenAI({
@@ -14,8 +12,6 @@ const openai = new OpenAI({
 });
 
 export async function GET(request: Request) {
-  // A Vercel Cron envia requisições GET por padrão. 
-  // Redirecionamos para a mesma lógica do POST.
   return processAI();
 }
 
@@ -24,12 +20,13 @@ export async function POST(request: Request) {
 }
 
 async function processAI() {
+  let idsToProcess: string[] = [];
+
   try {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ error: 'OpenAI API Key não configurada.' }, { status: 500 });
     }
 
-    // 1. Busca os IDs das próximas 50 perguntas pendentes (Batching Limitado)
     const { data: toProcess, error: fetchError } = await supabase
       .from('questions')
       .select('id')
@@ -42,11 +39,8 @@ async function processAI() {
       return NextResponse.json({ message: 'Nenhuma pergunta pendente no momento.' });
     }
 
-    const idsToProcess = toProcess.map(q => q.id);
+    idsToProcess = toProcess.map(q => q.id);
 
-    // 2. BLOQUEIO ATÔMICO (Locking)
-    // Atualizamos imediatamente para 'processing'. 
-    // Só pegamos as que ainda estão 'pending', evitando Race Conditions com outra execução.
     const { data: questions, error: lockError } = await supabase
       .from('questions')
       .update({ status: 'processing' })
@@ -57,11 +51,9 @@ async function processAI() {
     if (lockError) throw lockError;
 
     if (!questions || questions.length === 0) {
-      return NextResponse.json({ message: 'Perguntas já foram capturadas por outra execução paralela.' });
+      return NextResponse.json({ message: 'Perguntas já foram capturadas por outra execução.' });
     }
 
-    // 3. Agrupamento Local por Sessão
-    // Diferentes eventos podem estar acontecendo ao mesmo tempo, não queremos misturar as perguntas.
     const sessionMap = new Map<string, typeof questions>();
     questions.forEach(q => {
       if (!sessionMap.has(q.session_id)) sessionMap.set(q.session_id, []);
@@ -70,13 +62,12 @@ async function processAI() {
 
     const finalResult = [];
 
-    // 4. Processa cada sessão isoladamente
     for (const [sessionId, sessionQuestions] of sessionMap.entries()) {
       
       const inputForAI = sessionQuestions.map((q) => `ID: ${q.id} | Pergunta: ${q.content}`).join('\n');
 
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini", // Rápido, barato, ideal para produção
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -122,7 +113,6 @@ async function processAI() {
 
       const aiResult = JSON.parse(response.choices[0].message.content!);
       
-      // 5. Salva os resultados no banco
       if (aiResult.rejected_ids.length > 0) {
         await supabase
           .from('questions')
@@ -151,7 +141,6 @@ async function processAI() {
             .update({ status: 'processed', parent_id: newQuestion.id })
             .in('id', cluster.original_ids);
         } else {
-           // Se falhar a inserção, reverte os originais para erro ou rejected para não travarem como processing eternamente
            await supabase.from('questions').update({ status: 'rejected' }).in('id', cluster.original_ids);
         }
       }
@@ -163,6 +152,17 @@ async function processAI() {
 
   } catch (error: any) {
     console.error("Erro na API de IA Batch:", error);
+    
+    // Libera o lock se deu algum erro na OpenAI ou no meio do processo!
+    if (idsToProcess.length > 0) {
+      console.log("Revertendo lock de", idsToProcess.length, "perguntas para 'pending' devido a erro.");
+      await supabase
+        .from('questions')
+        .update({ status: 'pending' })
+        .in('id', idsToProcess)
+        .eq('status', 'processing');
+    }
+
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
