@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import { createClient } from "@/utils/supabase/client";
 
-export default function JoinEventPage({ params }: { params: { eventId: string } }) {
+export default function JoinEventPage({ params }: { params: Promise<{ eventId: string }> }) {
+  const { eventId } = use(params);
   const [question, setQuestion] = useState("");
   const [authorName, setAuthorName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -12,13 +13,9 @@ export default function JoinEventPage({ params }: { params: { eventId: string } 
   const [isLoading, setIsLoading] = useState(true);
   
   const supabase = createClient();
-  const eventId = params.eventId;
 
-  // Busca a sessão ativa para este evento
   useEffect(() => {
     const fetchActiveSession = async () => {
-      // Como não sabemos o 'status' exato, buscamos a sessão vinculada ao evento.
-      // Em produção, adicionaríamos .eq('status', 'live') ou similar.
       const { data, error } = await supabase
         .from("sessions")
         .select("*")
