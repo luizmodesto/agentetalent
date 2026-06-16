@@ -9,6 +9,9 @@ type Question = {
   content: string;
   status: string;
   ai_score: number | null;
+  context: string | null;
+  suggested_answer: string | null;
+  transition: string | null;
   created_at: string;
 };
 
@@ -170,6 +173,27 @@ export default function LiveControlPanel({ params }: { params: Promise<{ eventId
                       </span>
                     </div>
                     <p className={`text-lg mb-4 ${q.status === 'approved' ? 'text-white' : 'text-neutral-300'}`}>{q.content}</p>
+                    
+                    {q.status === 'approved' && q.suggested_answer && (
+                      <div className="mt-4 bg-neutral-950/50 rounded-lg p-4 border border-purple-500/20 space-y-3">
+                        {q.context && (
+                          <div className="text-sm">
+                            <span className="text-purple-400 font-semibold block mb-1">💡 Contexto (Por que responder):</span>
+                            <span className="text-neutral-300">{q.context}</span>
+                          </div>
+                        )}
+                        {q.transition && (
+                          <div className="text-sm">
+                            <span className="text-emerald-400 font-semibold block mb-1">🗣️ Transição sugerida:</span>
+                            <span className="text-neutral-300 italic">"{q.transition}"</span>
+                          </div>
+                        )}
+                        <div className="text-sm">
+                          <span className="text-blue-400 font-semibold block mb-1">🤖 Resposta da IA (Co-host):</span>
+                          <span className="text-neutral-300">{q.suggested_answer}</span>
+                        </div>
+                      </div>
+                    )}
                     
                     <div className="flex justify-between items-center mt-4 pt-4 border-t border-neutral-800/50">
                       <div className="flex items-center gap-2">
