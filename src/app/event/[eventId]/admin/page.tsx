@@ -3,6 +3,8 @@
 import { useEffect, useState, use } from "react";
 import { createClient } from "@/utils/supabase/client";
 
+import Link from "next/link";
+
 export default function AdminControlPanel({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = use(params);
   
@@ -52,6 +54,11 @@ export default function AdminControlPanel({ params }: { params: Promise<{ eventI
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white font-sans p-6">
+      <div className="mb-6">
+        <Link href="/admin" className="text-neutral-500 hover:text-white transition-colors text-sm font-medium flex items-center gap-1 w-fit">
+          ← Voltar para Painel Global
+        </Link>
+      </div>
       <header className="mb-8 flex justify-between items-center bg-neutral-900 p-6 rounded-2xl border border-neutral-800">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-3">

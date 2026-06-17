@@ -77,6 +77,13 @@ async function processAI() {
       
       const inputForAI = sessionQuestions.map((q) => `ID:${q.id}|${q.author_name ? 'De:' + q.author_name + '|' : ''}Q:${q.content}`).join('\n');
 
+      let languageInstruction = "Português do Brasil";
+      if (language === "pt-PT") {
+        languageInstruction = "Português de Portugal (EUROPEU). Utilize OBRIGATORIAMENTE vocabulário, gírias e sintaxe típicas de Portugal (ex: 'a falar' em vez de 'falando', 'ecrã', 'telemóvel'). Aja como um nativo de Portugal.";
+      } else {
+        languageInstruction = "Português do Brasil. Utilize vocabulário natural do Brasil.";
+      }
+
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         max_tokens: 1000,
@@ -93,7 +100,7 @@ async function processAI() {
    - Uma sugestão de resposta clara e concisa (máx 3-5 frases).
    - Uma frase de transição natural para o palestrante falar antes de responder.
 Regras: 
-- Mantenha o tom e o idioma da resposta rigidamente como: ${language}.
+- Mantenha o tom e o idioma da resposta rigidamente como: ${languageInstruction}
 - ${personality ? 'Personalidade obrigatória: ' + personality : 'Mantenha um tom profissional e natural.'}
 - Evite respostas genéricas e seja conciso.`
           },

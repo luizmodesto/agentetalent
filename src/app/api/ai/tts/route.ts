@@ -7,7 +7,7 @@ const openai = new OpenAI({
 
 export async function POST(request: Request) {
   try {
-    const { text, voice_id } = await request.json();
+    const { text, voice_id, speed } = await request.json();
 
     if (!text) {
       return NextResponse.json({ error: 'Texto é obrigatório.' }, { status: 400 });
@@ -21,6 +21,7 @@ export async function POST(request: Request) {
       model: "tts-1",
       voice: voice_id || "onyx",
       input: text,
+      speed: speed ? parseFloat(speed) : 1.0,
     });
 
     const buffer = Buffer.from(await mp3.arrayBuffer());
