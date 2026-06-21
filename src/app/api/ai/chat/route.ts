@@ -39,24 +39,66 @@ export async function POST(request: Request) {
     const { data: sessions } = await supabase.from('sessions').select('id').eq('event_id', eventId);
     const sessionIds = sessions?.map(s => s.id) || [];
 
-    // Coletar perguntas aprovadas associadas às sessões deste evento
+    // Coletar perguntas associadas às sessões deste evento (ou globais para simulação)
     let questionsList = "Nenhuma pergunta no momento.";
+    let query = supabase.from('questions').select('id, content, author_name').limit(30);
+    
     if (sessionIds.length > 0) {
-      const { data: questions } = await supabase
-        .from('questions')
-        .select('id, content, author_name')
-        .in('session_id', sessionIds)
-        .eq('status', 'approved')
-        .limit(10);
-      
-      questionsList = questions?.map((q, idx) => `[ID: ${q.id}] De ${q.author_name || 'Anônimo'}: ${q.content}`).join('\n') || "Nenhuma pergunta no momento.";
+      query = query.in('session_id', sessionIds);
+    }
+    
+    // Buscar tanto approved como pending para garantir que a simulação recebe as perguntas inseridas
+    query = query.in('status', ['approved', 'pending']);
+    
+    const { data: questions } = await query;
+    if (questions && questions.length > 0) {
+      questionsList = questions.map(q => `[ID: ${q.id}] De ${q.author_name || 'Anônimo'}: ${q.content}`).join('\n');
     }
 
     // Lógica do Idioma
-    const isPT = eventData?.language === 'pt-PT';
-    const languageInstruction = isPT 
-      ? "Português de Portugal (EUROPEU). Utilize OBRIGATORIAMENTE vocabulário, gírias e sintaxe típicas de Portugal. Aja como um nativo de Portugal."
-      : "Português do Brasil. Utilize vocabulário natural do Brasil.";
+    let languageInstruction = "";
+    if (eventData?.language === 'en-US') {
+      languageInstruction = "Your response language must be strictly American English (en-US). Use an engaging, high-energy stage-presence vocabulary suitable for a premium tech and marketing event. Match the tone selected by the user (Corporate, Energetic, or Casual).";
+    } else if (eventData?.language === 'pt-BR') {
+      languageInstruction = "O seu idioma de resposta é o Português do Brasil. Utilize vocabulário natural do Brasil, adequando a um evento de tecnologia/marketing de alto nível.";
+    } else {
+      languageInstruction = "O seu idioma de resposta é estritamente o Português de Portugal (PT-PT). Proibido usar gerúndios (use 'estou a apresentar' em vez de 'estou apresentando'). Utilize vocabulário estritamente europeu ('oradores', 'ecrã', 'palco', 'equipas'). Escreva o texto de forma a induzir o modelo TTS da OpenAI a adotar a fonética de Portugal Continental.";
+    }
+
+    // Modulação Vocal Avançada (OpenAI Prompt Engineering)
+    let advancedVocalPrompt = "";
+    let personalityObj: any = {};
+    if (eventData?.personality) {
+      try {
+        personalityObj = JSON.parse(eventData.personality);
+      } catch (e) {}
+    }
+
+    if (personalityObj.tts_provider === "openai") {
+      const tone = personalityObj.openai_tone || "Corporativo Premium";
+      const rhythm = personalityObj.openai_rhythm || "Cadenciado com Pausas (Formal)";
+      const storytelling = personalityObj.openai_storytelling || 5;
+
+      let toneInstruction = "Mantenha um tom corporativo, elegante e de alta qualidade (Premium).";
+      if (tone === "Energético de Palco") toneInstruction = "Seja extremamente vibrante, elétrico e entusiástico, como um grande apresentador num palco épico. Use exclamações fortes para escalar a emoção!";
+      else if (tone === "Descontraído/Interativo") toneInstruction = "Seja muito leve, use um tom conversacional moderno, humor inteligente e seja incrivelmente próximo da audiência.";
+
+      let rhythmInstruction = "Fale num ritmo padrão e moderado.";
+      if (rhythm === "Cadenciado com Pausas (Formal)") rhythmInstruction = "Utilize reticências (...) sistematicamente para forçar pausas dramáticas. O texto deve respirar e dar um peso monumental a cada palavra chave.";
+      else if (rhythm === "Fluido e Rápido (Dinâmico)") rhythmInstruction = "Use frases curtas, diretas e contínuas. Evite reticências. O ritmo deve ser muito rápido, empolgante e focado na ação imediata.";
+
+      let storyInstruction = "Linguagem equilibrada.";
+      if (storytelling >= 8) storyInstruction = "NÍVEL MÁXIMO DE STORYTELLING: Use metáforas ricas, adjetivos épicos e construa uma narrativa fortemente emocional e heroica.";
+      else if (storytelling <= 3) storyInstruction = "Seja estritamente direto, altamente informativo, limpo e sem floreados literários.";
+
+      advancedVocalPrompt = `
+--- DIRETRIZES DE MODULAÇÃO VOCAL EXTREMA (P/ O TTS) ---
+(Aplique as regras abaixo na sua escrita, pois a pontuação controla a voz do sintetizador)
+- TOM: ${toneInstruction}
+- RITMO (PONTUAÇÃO): ${rhythmInstruction}
+- NÍVEL DE STORYTELLING: ${storyInstruction}
+--------------------------------------------------------`;
+    }
 
     // 2. Construir o Prompt do Cérebro (DIGITALENT)
     const systemPrompt = `Você é a "DIGITALENT", uma Apresentadora Autônoma e Co-Host de Eventos com inteligência artificial.
@@ -66,6 +108,8 @@ DIRETRIZES DE PERSONALIDADE:
 - Personalidade Customizada do Evento: ${eventData?.personality || "Profissional, acolhedor e dinâmico."}
 - Idioma estrito: ${languageInstruction}
 - Regras de Segurança: NUNCA repita palavrões, ofensas, tom de deboche ou piadas de mau gosto enviadas pela plateia. Filtre e seja ético.
+${advancedVocalPrompt}
+
 
 O EVENTO: ${eventData?.title}
 O PALESTRANTE ATUAL: ${speakerName || "Nenhum no momento."}
@@ -99,12 +143,36 @@ Responda agora ao comando do usuário:`;
 
     const aiResponse = response.choices[0].message.content;
 
-    // 3. Gerar Áudio com ElevenLabs se configurado
+    // 3. Gerar Áudio com o Provedor Configurado
     let audioBase64 = null;
     try {
       if (eventData?.personality) {
         const config = JSON.parse(eventData.personality);
-        if (config.elevenlabs_api_key && config.voice_id) {
+        const provider = config.tts_provider || "elevenlabs"; // default if missing
+        
+        if (provider === "fishaudio" && config.fish_api_key) {
+          const fishResponse = await fetch(`https://api.fish.audio/v1/tts`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${config.fish_api_key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              text: aiResponse,
+              format: 'mp3',
+              reference_id: config.fish_reference_id || undefined
+            })
+          });
+
+          if (fishResponse.ok) {
+            const arrayBuffer = await fishResponse.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            audioBase64 = buffer.toString('base64');
+          } else {
+            console.error("Erro Fish Audio:", await fishResponse.text());
+          }
+        } 
+        else if (provider === "elevenlabs" && config.elevenlabs_api_key && config.voice_id) {
           const elResponse = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${config.voice_id}`, {
             method: 'POST',
             headers: {
@@ -130,9 +198,37 @@ Responda agora ao comando do usuário:`;
             console.error("Erro ElevenLabs:", await elResponse.text());
           }
         }
+        else if (provider === "openai") {
+          const openAiKey = process.env.OPENAI_API_KEY;
+          if (openAiKey) {
+            const oaResponse = await fetch(`https://api.openai.com/v1/audio/speech`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${openAiKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: "tts-1",
+                voice: config.openai_voice || "onyx",
+                input: aiResponse,
+                speed: config.speed || 1.0
+              })
+            });
+
+            if (oaResponse.ok) {
+              const arrayBuffer = await oaResponse.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              audioBase64 = buffer.toString('base64');
+            } else {
+              console.error("Erro OpenAI TTS:", await oaResponse.text());
+            }
+          } else {
+             console.error("Erro: OPENAI_API_KEY não definida no servidor.");
+          }
+        }
       }
     } catch (e) {
-      console.error("Falha ao gerar audio ElevenLabs", e);
+      console.error("Falha ao gerar audio TTS:", e);
     }
 
     return NextResponse.json({ reply: aiResponse, audioBase64 });

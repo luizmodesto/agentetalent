@@ -8,6 +8,7 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
   const { eventId } = use(params);
   const [aiState, setAiState] = useState<"idle" | "listening" | "processing" | "speaking">("idle");
   const [currentText, setCurrentText] = useState("Pressione a barra de espaço ou clique na tela para começar a falar com a DIGITALENT.");
+  const [displayedText, setDisplayedText] = useState("");
   const [bars, setBars] = useState<number[]>(Array(9).fill(20));
 
   // Voice Settings State
@@ -17,37 +18,143 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
   const [rate, setRate] = useState<number>(1.05);
   const [pitch, setPitch] = useState<number>(1.0);
   const [volume, setVolume] = useState<number>(1.0);
+  const [language, setLanguage] = useState<string>("pt-PT");
 
   const recognitionRef = useRef<any>(null);
   const isContinuousRef = useRef(false);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastTranscriptRef = useRef<string>("");
 
+  // Slide & Sponsors & Names State
+  const [slideUrl, setSlideUrl] = useState<string>("");
+  const [sponsors, setSponsors] = useState<string[]>([]);
+  const [voiceCommands, setVoiceCommands] = useState({ next: "próxima página", prev: "retorna" });
+  const [authors, setAuthors] = useState<string[]>([]);
+  const [highlightedName, setHighlightedName] = useState<string | null>(null);
+  
+  // Refs for Speech Recognition Access
+  const personalityRef = useRef<any>({});
+
   // Carrega configurações iniciais do Admin (BD)
   useEffect(() => {
     const fetchConfig = async () => {
       const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-      const { data } = await supabase.from('events').select('personality').eq('id', eventId).single();
-      if (data && data.personality) {
+      const { data } = await supabase.from('events').select('personality, language').eq('id', eventId).single();
+      
+      // Fetch names from questions
+      const { data: questionsData } = await supabase.from('questions').select('author_name').eq('status', 'approved');
+      if (questionsData) {
+        // Obter nomes únicos e remover nulos
+        const uniqueNames = Array.from(new Set(questionsData.map(q => q.author_name).filter(Boolean)));
+        setAuthors(uniqueNames as string[]);
+      }
+
+      // Hack para simulação caso o script tenha deixado as perguntas como pending sem sessão
+      if (!questionsData || questionsData.length === 0) {
+         const { data: pendingData } = await supabase.from('questions').select('author_name').eq('status', 'pending');
+         if (pendingData) {
+            const uniqueNames = Array.from(new Set(pendingData.map(q => q.author_name).filter(Boolean)));
+            setAuthors(uniqueNames as string[]);
+         }
+      }
+
+      if (data) {
+        if (data.language) setLanguage(data.language);
+        if (data.personality) {
         try {
           const config = JSON.parse(data.personality);
+          personalityRef.current = config;
+          
           if (config.speed) setRate(config.speed);
           if (config.pitch) setPitch(config.pitch);
-          // O volume e voiceURI locais ainda prevalecem se o usuário quiser sobrescrever durante a live
+          
+          if (config.sponsors && Array.isArray(config.sponsors)) setSponsors(config.sponsors);
+          if (config.voice_commands) setVoiceCommands(config.voice_commands);
+          
+          // Resolução do Slide Atual
+          if (config.slide_decks && config.active_speaker_id) {
+            const speakerSlides = config.slide_decks[config.active_speaker_id] || [];
+            const idx = config.current_slide_index || 0;
+            if (speakerSlides[idx]) setSlideUrl(speakerSlides[idx]);
+          } else if (config.current_slide) {
+            setSlideUrl(config.current_slide);
+          }
         } catch (e) { }
+        }
       }
     };
     fetchConfig();
+
+    // Set up realtime listener for personality updates (so it changes slides in real-time)
+    const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+    const channel = supabase.channel('event_updates')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, (payload) => {
+        if (payload.new) {
+          if (payload.new.language) setLanguage(payload.new.language);
+          if (payload.new.personality) {
+            try {
+              const config = JSON.parse(payload.new.personality);
+              personalityRef.current = config;
+              
+              if (config.sponsors) setSponsors(config.sponsors);
+              if (config.voice_commands) setVoiceCommands(config.voice_commands);
+              
+              // Resolução do Slide Atual
+              if (config.slide_decks && config.active_speaker_id) {
+                const speakerSlides = config.slide_decks[config.active_speaker_id] || [];
+                const idx = config.current_slide_index || 0;
+                if (speakerSlides[idx]) setSlideUrl(speakerSlides[idx]);
+              } else if (config.current_slide !== undefined) {
+                setSlideUrl(config.current_slide);
+              }
+            } catch(e) {}
+          }
+        }
+      })
+      .subscribe();
+      
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [eventId]);
+
+  // Teleprompter Typing Effect
+  useEffect(() => {
+    if (aiState === "speaking") {
+      const words = currentText.split(" ");
+      let currentIndex = 0;
+      setDisplayedText("");
+      
+      // Média de fala: ~150 palavras por minuto (400ms por palavra), ajustado pela velocidade (rate)
+      const delayPerWord = 400 / rate; 
+      
+      const interval = setInterval(() => {
+        if (currentIndex < words.length) {
+          setDisplayedText(prev => prev + (prev ? " " : "") + words[currentIndex]);
+          currentIndex++;
+          
+          // Auto-scroll para baixo
+          const container = document.getElementById("teleprompter-container");
+          if (container) container.scrollTop = container.scrollHeight;
+        } else {
+          clearInterval(interval);
+        }
+      }, delayPerWord);
+      
+      return () => clearInterval(interval);
+    } else {
+      setDisplayedText(currentText);
+    }
+  }, [currentText, aiState, rate]);
 
   // Carrega as vozes disponíveis
   useEffect(() => {
     if (typeof window !== "undefined" && 'speechSynthesis' in window) {
       const loadVoices = () => {
-        const availableVoices = window.speechSynthesis.getVoices().filter(v => v.lang.includes("pt") || v.lang.includes("PT"));
+        const langFilter = language === "en-US" ? "en" : "pt";
+        const availableVoices = window.speechSynthesis.getVoices().filter(v => v.lang.toLowerCase().includes(langFilter));
         setVoices(availableVoices);
         if (availableVoices.length > 0 && !voiceURI) {
-          // Define a primeira voz PT como padrão
           setVoiceURI(availableVoices[0].voiceURI);
         }
       };
@@ -55,7 +162,7 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
       loadVoices();
       window.speechSynthesis.onvoiceschanged = loadVoices;
     }
-  }, [voiceURI]);
+  }, [voiceURI, language]);
 
   // Inicializa o Reconhecimento de Voz (Web Speech API)
   useEffect(() => {
@@ -65,7 +172,7 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
         recognitionRef.current = new SpeechRecognition();
         recognitionRef.current.continuous = true;
         recognitionRef.current.interimResults = true; // Mostra o texto em tempo real!
-        recognitionRef.current.lang = 'pt-BR';
+        recognitionRef.current.lang = language;
 
         recognitionRef.current.onstart = () => {
           isContinuousRef.current = true;
@@ -91,6 +198,39 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
           // Cancela o timer anterior se a pessoa continuar falando
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
+          }
+
+          // Verifica Comandos de Slide
+          const conf = personalityRef.current;
+          if (conf && conf.voice_commands) {
+            const vNext = conf.voice_commands.next?.toLowerCase();
+            const vPrev = conf.voice_commands.prev?.toLowerCase();
+            let newIndex = conf.current_slide_index || 0;
+            let changed = false;
+
+            if (vNext && transcript.includes(vNext)) {
+               newIndex++;
+               changed = true;
+            } else if (vPrev && transcript.includes(vPrev)) {
+               newIndex = Math.max(0, newIndex - 1);
+               changed = true;
+            }
+
+            if (changed) {
+               if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+               setCurrentText(`📺 Comando de Slide Detetado! Alterando slide...`);
+               
+               // Limpa o último transcript para não repitir o trigger
+               event.results[event.results.length - 1][0].transcript = "";
+               
+               // Atualiza DB
+               conf.current_slide_index = newIndex;
+               const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+               supabase.from('events').update({ personality: JSON.stringify(conf) }).eq('id', eventId).then(() => {
+                 setTimeout(() => { setCurrentText("DIGITALENT em escuta contínua."); }, 2000);
+               });
+               return; // Skip normal processing
+            }
           }
 
           // Verifica se tem o Wake Word imediatamente para atalho (opcional)
@@ -131,7 +271,7 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
         setCurrentText("O seu navegador não suporta a gravação de voz (Tente usar o Google Chrome).");
       }
     }
-  }, [eventId]);
+  }, [eventId, language]);
 
   const toggleListening = () => {
     if (aiState === "listening") {
@@ -158,7 +298,7 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       
-      utterance.lang = 'pt-BR';
+      utterance.lang = language;
       utterance.rate = rate;
       utterance.pitch = pitch;
       utterance.volume = volume;
@@ -212,10 +352,12 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
         setAiState("speaking");
         setCurrentText(data.reply);
         
-        // Se a API retornou áudio (via ElevenLabs), nós o tocamos primeiro
+        // Se a API retornou áudio (ElevenLabs, Fish Audio, OpenAI), nós o tocamos primeiro
         if (data.audioBase64) {
           const audio = new Audio("data:audio/mp3;base64," + data.audioBase64);
           audio.volume = volume;
+          audio.playbackRate = rate; // Aplica a velocidade da UI (0.5 a 2.0)
+          audio.preservesPitch = false; // Emulando 'pitch' da voz baseada em tempo
           
           audio.onended = () => {
             isContinuousRef.current = true;
@@ -223,7 +365,7 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
           };
 
           audio.onerror = (e) => {
-            console.error("Erro no áudio ElevenLabs:", e);
+            console.error("Erro no áudio remoto:", e);
             fallbackToNativeTTS(data.reply);
           };
 
@@ -271,14 +413,44 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [aiState]);
 
+  // Highlight Name Logic
+  useEffect(() => {
+    if (aiState === "speaking" || aiState === "listening") {
+      const lowerText = currentText.toLowerCase();
+      // Try to find if any author is mentioned in the current text
+      const found = authors.find(name => lowerText.includes(name.toLowerCase()));
+      if (found) setHighlightedName(found);
+      else setHighlightedName(null);
+    } else {
+      setHighlightedName(null);
+    }
+  }, [currentText, aiState, authors]);
+
+  // Word Cloud Static Configuration
+  // Gerar cores e tamanhos fixos para cada nome para não saltarem ao re-renderizar
+  const wordCloudStyles = useRef<{ [key: string]: { color: string, size: string, isVertical: boolean } }>({});
+  useEffect(() => {
+    const colors = ["text-indigo-400", "text-purple-400", "text-emerald-400", "text-pink-400", "text-cyan-400", "text-yellow-400", "text-white", "text-blue-400", "text-rose-400"];
+    const sizes = ["text-xl", "text-2xl", "text-3xl", "text-4xl", "text-lg", "text-5xl"];
+    authors.forEach(name => {
+      if (!wordCloudStyles.current[name]) {
+        wordCloudStyles.current[name] = {
+          color: colors[Math.floor(Math.random() * colors.length)],
+          size: sizes[Math.floor(Math.random() * sizes.length)],
+          isVertical: Math.random() > 0.8
+        };
+      }
+    });
+  }, [authors]);
+
   return (
-    <div className="min-h-screen bg-[#050505] text-white flex flex-col justify-between p-8 md:p-16 overflow-hidden selection:bg-purple-500/30">
+    <div className="h-screen w-full bg-[#050505] text-white flex flex-col p-4 md:p-6 overflow-hidden selection:bg-purple-500/30 font-sans">
       
       {/* BOTÃO INVISÍVEL GIGANTE PARA TOUCH NO CELULAR */}
       <button 
         onClick={toggleListening}
         onTouchStart={(e) => { 
-          if (isSettingsOpen) return; // Não ativa o microfone se estiver a mexer no menu
+          if (isSettingsOpen) return;
           e.preventDefault(); 
           toggleListening(); 
         }}
@@ -288,95 +460,148 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
       />
 
       {/* HEADER BAR */}
-      <header className="flex justify-between items-center opacity-70 hover:opacity-100 transition-opacity relative z-50">
+      <header className="flex justify-between items-center opacity-80 hover:opacity-100 transition-opacity relative z-50 shrink-0 h-16 border-b border-neutral-800/50 pb-4 mb-4">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center">
-            <span className="font-bold text-lg">AI</span>
+          <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <span className="font-bold text-sm">AI</span>
           </div>
-          <div className="pointer-events-none">
-            <h1 className="text-2xl font-bold tracking-tight">DIGITALENT Teleprompter</h1>
-            <p className="text-neutral-500 font-medium">Tech Summit 2026</p>
+          <div className="pointer-events-none flex items-center gap-3">
+            <h1 className="text-lg md:text-xl font-bold tracking-tight text-white/90">DIGITALENT</h1>
+            <div className="w-px h-6 bg-neutral-700"></div>
+            <p className="text-neutral-400 font-medium text-sm">Tech Summit 2026</p>
           </div>
         </div>
         
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 px-6 py-3 rounded-full pointer-events-none">
-            <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-red-400 font-bold uppercase tracking-widest hidden sm:inline-block">No Ar</span>
+        <div className="flex items-center gap-4">
+          <div className={`flex items-center gap-2 border px-4 py-1.5 rounded-full pointer-events-none transition-colors duration-500 ${aiState === "speaking" || aiState === "processing" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
+            <div className={`w-2 h-2 rounded-full animate-pulse ${aiState === "speaking" || aiState === "processing" ? "bg-emerald-500" : "bg-red-500"}`}></div>
+            <span className="font-bold uppercase tracking-widest text-xs hidden sm:inline-block">No Ar</span>
           </div>
           <button 
             onClick={() => setIsSettingsOpen(true)}
-            className="p-3 bg-white/5 hover:bg-white/10 rounded-full transition-colors border border-white/10 text-neutral-300 hover:text-white pointer-events-auto"
+            className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors border border-white/10 text-neutral-400 hover:text-white pointer-events-auto relative z-50"
             title="Configurações de Voz"
           >
-            <Settings className="w-6 h-6" />
+            <Settings className="w-5 h-5" />
           </button>
         </div>
       </header>
 
-      {/* MAIN TEXT AREA */}
-      <main className="flex-1 flex items-center justify-center py-12 relative z-10 pointer-events-none">
-        <h2 className={`text-5xl md:text-7xl font-bold leading-[1.2] text-center max-w-6xl transition-all duration-700 ${
-          aiState === "listening" ? "text-neutral-600 scale-95" : 
-          aiState === "processing" ? "text-indigo-400 animate-pulse" :
-          "text-white scale-100"
-        }`}>
-          {currentText}
-        </h2>
-      </main>
-
-      {/* AI VISUALIZER FOOTER */}
-      <footer className="flex flex-col items-center justify-center gap-10 pb-8 relative z-10 pointer-events-none">
-        <p className={`text-sm uppercase tracking-widest font-bold transition-colors ${
-          aiState === "speaking" ? "text-purple-400" : 
-          aiState === "listening" ? "text-red-500" :
-          aiState === "processing" ? "text-indigo-400" :
-          "text-neutral-600"
-        }`}>
-          {aiState === "speaking" ? "A DIGITALENT está a falar" : 
-           aiState === "listening" ? "A DIGITALENT está a ouvir" : 
-           aiState === "processing" ? "A DIGITALENT está a pensar..." : 
-           "Sistema em modo de espera"}
-          <span className="block text-center text-xs opacity-50 mt-3 text-neutral-500">
-            (Toque em qualquer lugar da tela para falar)
-          </span>
-        </p>
-
-        {/* AI CORE VISUALIZATION */}
-        <div className="relative flex items-center justify-center h-32 w-full">
-          {aiState === "listening" ? (
-            // LISTENING MODE: Pulsing Red Microphone
-            <div className="flex items-center justify-center relative">
-              <div className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-20 scale-150"></div>
-              <div className="absolute inset-0 bg-red-500/30 rounded-full animate-pulse scale-125"></div>
-              <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center z-10 shadow-[0_0_60px_rgba(220,38,38,0.6)]">
-                <Mic className="w-10 h-10 text-white" />
-              </div>
+      {/* CONTEÚDO PRINCIPAL (SPLIT SCREEN: 65% Esquerda, 35% Direita) */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 overflow-hidden relative z-10 pointer-events-none">
+        
+        {/* COLUNA ESQUERDA - SLIDE */}
+        <div className="flex-[2] flex items-center justify-center bg-[#0a0a0a] border border-neutral-800 rounded-2xl overflow-hidden relative shadow-2xl p-4">
+          {slideUrl ? (
+            <img src={slideUrl} alt="Slide Atual" className="w-full h-full object-contain" />
+          ) : (
+            <div className="text-neutral-600 font-medium flex flex-col items-center gap-3">
+               <div className="w-16 h-16 border-2 border-dashed border-neutral-700 rounded-xl flex items-center justify-center">
+                 <span className="text-neutral-700 font-bold text-sm">SLIDE</span>
+               </div>
+               <span className="text-sm">Aguardando Slide...</span>
             </div>
-          ) : aiState === "speaking" ? (
-          <div className="flex items-end gap-1.5 h-16 pointer-events-auto cursor-pointer" onClick={toggleListening} title="Toque para parar a fala">
-            {bars.map((height, i) => (
-              <div 
-                key={i} 
-                className="w-2 md:w-3 bg-gradient-to-t from-purple-600 to-indigo-400 rounded-t-full transition-all duration-150"
-                style={{ height: `${height}%` }}
-              ></div>
+          )}
+        </div>
+
+        {/* COLUNA DIREITA - AI & WORDCLOUD */}
+        <div className="flex-1 flex flex-col gap-4 min-w-[320px]">
+          
+          {/* TOPO: NUVEM DE NOMES (WORD CLOUD) */}
+          <div className="flex-[2] bg-[#0a0a0a] border border-neutral-800 rounded-2xl p-6 overflow-hidden relative flex flex-wrap content-center justify-center gap-x-4 gap-y-2">
+             {authors.length === 0 ? (
+               <span className="text-neutral-600 text-sm">Nenhum participante ainda.</span>
+             ) : (
+               authors.map((name, i) => {
+                 const style = wordCloudStyles.current[name] || { color: "text-white", size: "text-xl", isVertical: false };
+                 const isHighlighted = highlightedName === name;
+                 
+                 return (
+                   <span 
+                     key={i} 
+                     className={`font-black tracking-tight leading-none transition-all duration-700 ${
+                       isHighlighted 
+                         ? "text-7xl xl:text-8xl text-white drop-shadow-[0_0_30px_rgba(255,255,255,0.8)] scale-110 z-50 absolute inset-0 m-auto flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-2xl" 
+                         : `${style.color} ${style.size} opacity-70 ${style.isVertical ? 'writing-vertical-rl rotate-180' : ''}`
+                     }`}
+                     style={{
+                        writingMode: !isHighlighted && style.isVertical ? "vertical-rl" : "horizontal-tb",
+                     }}
+                   >
+                     {name}
+                   </span>
+                 );
+               })
+             )}
+          </div>
+
+          {/* MEIO: LEGENDA / TELEPROMPTER COMPACTO */}
+          <div className="h-28 shrink-0 bg-[#0a0a0a] border border-neutral-800 rounded-2xl p-4 flex items-center relative overflow-hidden">
+             <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/50"></div>
+             <p className={`text-lg md:text-xl font-medium leading-snug w-full truncate whitespace-normal line-clamp-3 ${
+                aiState === "listening" ? "text-neutral-500" : 
+                aiState === "processing" ? "text-indigo-400 animate-pulse" :
+                "text-white"
+             }`}>
+               {displayedText}
+             </p>
+          </div>
+
+          {/* FUNDO: VISUALIZADOR DA IA */}
+          <div className="h-24 shrink-0 bg-[#0a0a0a] border border-neutral-800 rounded-2xl p-4 flex items-center justify-between pointer-events-auto cursor-pointer group" onClick={(e) => { e.stopPropagation(); toggleListening(); }}>
+             <div className="flex flex-col justify-center">
+                <span className="text-[10px] uppercase tracking-widest text-neutral-500 font-bold mb-1">Status da IA</span>
+                <span className={`text-sm font-semibold transition-colors ${
+                  aiState === "speaking" ? "text-purple-400" : 
+                  aiState === "listening" ? "text-red-500" :
+                  aiState === "processing" ? "text-indigo-400" :
+                  "text-neutral-600"
+                }`}>
+                  {aiState === "speaking" ? "A DIGITALENT está a falar" : 
+                   aiState === "listening" ? "A DIGITALENT está a ouvir" : 
+                   aiState === "processing" ? "A pensar..." : 
+                   "Modo de Espera"}
+                </span>
+             </div>
+             
+             {/* Barras de Áudio */}
+             <div className="flex items-end gap-1 h-10 w-24">
+                {aiState === "listening" ? (
+                  <div className="w-full flex items-center justify-end pr-2">
+                     <div className="w-4 h-4 bg-red-500 rounded-full animate-ping"></div>
+                  </div>
+                ) : aiState === "speaking" ? (
+                  bars.slice(0, 7).map((height, i) => (
+                    <div 
+                      key={i} 
+                      className="w-2 bg-gradient-to-t from-purple-600 to-indigo-400 rounded-t-sm transition-all duration-150"
+                      style={{ height: `${height}%` }}
+                    ></div>
+                  ))
+                ) : (
+                  <div className="w-full h-full flex items-center justify-end text-neutral-700 group-hover:text-neutral-500 transition-colors">
+                     <Mic className="w-6 h-6" />
+                  </div>
+                )}
+             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* RODAPÉ PATROCINADORES */}
+      {sponsors.length > 0 && (
+        <div className="h-14 mt-4 shrink-0 flex items-center overflow-hidden bg-[#0a0a0a] border border-neutral-800 rounded-xl relative z-10 pointer-events-none">
+          <div className="flex items-center gap-10 px-6 animate-marquee whitespace-nowrap min-w-full justify-around">
+            {sponsors.map((url, i) => (
+              <img key={i} src={url} alt={`Sponsor ${i}`} className="h-6 object-contain grayscale opacity-40" />
+            ))}
+            {/* Clone for seamless marquee */}
+            {sponsors.map((url, i) => (
+              <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-6 object-contain grayscale opacity-40" />
             ))}
           </div>
-        ) : (
-          <div 
-            onClick={toggleListening}
-            className={`w-24 h-24 rounded-full flex items-center justify-center transition-all cursor-pointer pointer-events-auto shadow-2xl ${
-              aiState === "listening" ? "bg-red-600 shadow-red-600/50 scale-110 animate-pulse" : 
-              aiState === "processing" ? "bg-indigo-600 shadow-indigo-600/50 animate-bounce" :
-              "bg-neutral-800 hover:bg-neutral-700 hover:scale-105"
-            }`}
-          >
-            <Mic className={`w-10 h-10 ${aiState === "listening" ? "text-white" : "text-neutral-400"}`} />
-          </div>
-        )}
         </div>
-      </footer>
+      )}
 
       {/* SETTINGS MODAL */}
       {isSettingsOpen && (
