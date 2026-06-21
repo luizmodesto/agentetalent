@@ -22,94 +22,150 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'OpenAI API Key not configured' }, { status: 500 });
     }
 
-    // 1. Fetch approved questions
-    const { data: questions, error } = await supabase
+    // 1. Fetch RAW questions (status pending)
+    const { data: rawQuestions, error: rawError } = await supabase
       .from('questions')
-      .select('content, author_name')
+      .select('id, content, author_name')
       .eq('session_id', sessionId)
-      .eq('status', 'approved')
-      .order('created_at', { ascending: false })
-      .limit(20);
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+      .limit(30);
 
-    if (error) throw error;
+    if (rawError) throw rawError;
 
-    if (!questions || questions.length === 0) {
-      return NextResponse.json({ message: 'No approved questions available yet.' }, { status: 200 });
+    // Fetch Context (Event name, topic)
+    const { data: session } = await supabase.from('sessions').select('*, events(*)').eq('id', sessionId).single();
+    const eventContext = session ? `Contexto do Evento: ${session.events?.title || 'Unknown'}` : 'Evento ao Vivo';
+
+    if (!rawQuestions || rawQuestions.length === 0) {
+      return NextResponse.json({ message: 'Nenhuma pergunta pendente para processar.' }, { status: 200 });
     }
 
     // Format questions for AI prompt
-    const inputQuestions = questions
-      .map((q, idx) => `[${idx + 1}] ${q.author_name ? `From ${q.author_name}: ` : ''}${q.content}`)
+    const inputQuestions = rawQuestions
+      .map((q) => `[ID: ${q.id}] ${q.author_name ? `De ${q.author_name}: ` : ''}${q.content}`)
       .join('\n');
 
-    // 2. Call OpenAI using Event Director prompt
+    // 2. System Prompt from the User
+    const systemPrompt = `We are building a real-time AI Event Copilot system called DIGITALENT.
+This AI is responsible for managing live audience interaction, selecting and refining questions, and actively assisting the speaker during an event.
+
+# ROLE OF THE AI
+You are an intelligent event moderator, co-host, and director.
+Your responsibilities include:
+* filtering and improving audience questions
+* grouping similar questions
+* selecting the best questions to ask
+* guiding the flow of the event
+* assisting the speaker with context and answers
+* generating natural speaking phrases
+
+You must think like a professional live event host.
+
+# CORE RESPONSIBILITIES
+
+## 1. FILTER & CLEAN QUESTIONS
+* Remove spam, duplicates, and irrelevant questions
+* Normalize language
+* Keep only meaningful questions
+
+## 2. CLUSTER QUESTIONS
+* Group similar questions into themes
+* Avoid repetition
+* Identify main audience interests
+
+## 3. GENERATE REFINED QUESTIONS
+For each cluster:
+* create one high-quality, clear, professional question
+
+## 4. GENERATE SPEAKER SUPPORT
+For each refined question generate:
+* CONTEXT: Why this question matters / How it connects to the topic
+* SUGGESTED ANSWER: Clear and concise (3-5 sentences), useful and realistic
+* TRANSITION PHRASE: Natural phrase for the speaker to start answering
+
+## 5. EVENT FLOW MANAGEMENT
+Analyze all refined questions and decide:
+* NEXT QUESTION: The best question to ask now
+* QUESTION QUEUE: Next 2-3 questions to maintain flow
+* EVENT STATE: Classify as "opening", "engagement", "deep_discussion", or "closing"
+* ENGAGEMENT STRATEGY: Suggest what the speaker should do (go deeper, simplify, ask audience interaction, change topic)
+
+## 6. SPEAKER INTERACTION MODE
+Generate real-time guidance for the speaker:
+* how to introduce the question
+* tone suggestion (formal, energetic, reflective)
+* optional follow-up question
+
+# RULES
+* Always respond in Brazilian Portuguese
+* Keep answers concise and useful for live speaking
+* Avoid generic or vague responses
+* Prioritize clarity and engagement
+* Maintain natural and human tone
+* Think in real-time context (live event)`;
+
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 800,
+      model: 'gpt-4o-2024-08-06',
       temperature: 0.7,
       messages: [
         {
           role: 'system',
-          content: `You are a real-time Event Flow AI acting as an event director and moderator.
-You must:
-- analyze all approved questions provided by the user
-- decide what should be asked next
-- maintain a coherent flow of conversation
-
-TASKS
-1. PRIORITIZATION
-- Select the best next question based on: relevance, diversity (avoid repetition), and audience interest.
-
-2. FLOW MANAGEMENT
-- Suggest the next 2-3 questions in sequence to form a queue.
-
-3. EVENT STATE
-Classify current moment:
-- "opening"
-- "deep_discussion"
-- "closing"
-
-4. ENGAGEMENT SUGGESTION
-- Suggest what the speaker should do: go deeper, simplify, interact with audience.
-
-RULES
-- Think like a professional event host
-- Keep flow natural and engaging
-- Avoid repetitive topics
-- Optimize for audience experience
-
-Return only the requested structured JSON data.`
+          content: systemPrompt
         },
         {
           role: 'user',
-          content: `Here are the currently approved questions:\n\n${inputQuestions}`
+          content: `Aqui está o contexto e as perguntas cruas (raw) da plateia para você processar:\n\n${eventContext}\n\nPERGUNTAS:\n${inputQuestions}`
         }
       ],
       response_format: {
         type: 'json_schema',
         json_schema: {
-          name: 'event_flow_director',
+          name: 'talent_copilot_output',
           strict: true,
           schema: {
             type: 'object',
             properties: {
-              next_question: { type: 'string', description: 'The exact next question that should be asked.' },
-              queue: { 
-                type: 'array', 
+              approved: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    question: { type: 'string', description: 'refined question' },
+                    context: { type: 'string' },
+                    suggested_answer: { type: 'string' },
+                    transition: { type: 'string' },
+                    speaker_tip: { type: 'string', description: 'tone suggestion and how to introduce' },
+                    follow_up: { type: 'string' }
+                  },
+                  required: ['question', 'context', 'suggested_answer', 'transition', 'speaker_tip', 'follow_up'],
+                  additionalProperties: false
+                }
+              },
+              rejected_ids: {
+                type: 'array',
                 items: { type: 'string' },
-                description: 'The next 2-3 questions in sequence.'
+                description: 'The IDs of the raw questions that were rejected, marked as spam or merged into a cluster.'
               },
-              event_state: { 
-                type: 'string', 
-                enum: ['opening', 'deep_discussion', 'closing'],
-                description: 'Classification of the current event moment.'
-              },
-              engagement_tip: { 
-                type: 'string',
-                description: 'Suggestion on what the speaker should do next (go deeper, simplify, interact with audience).'
+              event_flow: {
+                type: 'object',
+                properties: {
+                  next_question: { type: 'string' },
+                  queue: {
+                    type: 'array',
+                    items: { type: 'string' }
+                  },
+                  event_state: {
+                    type: 'string',
+                    enum: ['opening', 'engagement', 'deep_discussion', 'closing']
+                  },
+                  engagement_tip: { type: 'string' }
+                },
+                required: ['next_question', 'queue', 'event_state', 'engagement_tip'],
+                additionalProperties: false
               }
             },
-            required: ['next_question', 'queue', 'event_state', 'engagement_tip'],
+            required: ['approved', 'rejected_ids', 'event_flow'],
             additionalProperties: false
           }
         }
@@ -118,10 +174,14 @@ Return only the requested structured JSON data.`
 
     const aiResult = JSON.parse(response.choices[0].message.content!);
 
+    // Note: Em produção, após este resultado, você salvaria as "approved" na tabela, 
+    // deletaria ou marcaria as "rejected_ids" como rejeitadas,
+    // e atualizaria a sessão com o "event_flow".
+
     return NextResponse.json(aiResult);
 
   } catch (error: any) {
-    console.error('Error generating event flow:', error);
+    console.error('Error in DIGITALENT Copilot:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

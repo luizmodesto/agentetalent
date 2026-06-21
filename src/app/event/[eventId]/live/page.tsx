@@ -1,488 +1,449 @@
 "use client";
 
-import { useEffect, useState, use, useRef } from "react";
-import { createClient } from "@/utils/supabase/client";
-import Link from "next/link";
+import { useState, useEffect, useRef, use } from "react";
+import { Mic, Settings, X, Volume2, Gauge, Activity } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
 
-type Question = {
-  id: string;
-  author_name: string;
-  content: string;
-  status: string;
-  ai_score: number | null;
-  context: string | null;
-  suggested_answer: string | null;
-  transition: string | null;
-  created_at: string;
-};
-
-type EventFlow = {
-  next_question: string;
-  queue: string[];
-  event_state: string;
-  engagement_tip: string;
-};
-
-export default function LiveControlPanel({ params }: { params: Promise<{ eventId: string }> }) {
+export default function SpeakerTeleprompter({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = use(params);
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [questionsOpen, setQuestionsOpen] = useState(true);
-  
-  const [eventData, setEventData] = useState<any>(null);
-  const [activeSession, setActiveSession] = useState<any>(null);
-  const [speakerData, setSpeakerData] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const [isLoadingAudio, setIsLoadingAudio] = useState<string | null>(null);
-  const [speed, setSpeed] = useState<number>(0.95);
-  const [editedTexts, setEditedTexts] = useState<Record<string, string>>({});
+  const [aiState, setAiState] = useState<"idle" | "listening" | "processing" | "speaking">("idle");
+  const [currentText, setCurrentText] = useState("Pressione a barra de espaço ou clique na tela para começar a falar com a DIGITALENT.");
+  const [bars, setBars] = useState<number[]>(Array(9).fill(20));
 
-  const [eventFlow, setEventFlow] = useState<EventFlow | null>(null);
-  const [isFlowLoading, setIsFlowLoading] = useState(false);
+  // Voice Settings State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [voiceURI, setVoiceURI] = useState<string>("");
+  const [rate, setRate] = useState<number>(1.05);
+  const [pitch, setPitch] = useState<number>(1.0);
+  const [volume, setVolume] = useState<number>(1.0);
 
-  // JARVIS State
-  const [isListening, setIsListening] = useState(false);
-  const [jarvisProcessing, setJarvisProcessing] = useState(false);
-  const [jarvisTranscript, setJarvisTranscript] = useState("");
-  const [jarvisResponse, setJarvisResponse] = useState("");
   const recognitionRef = useRef<any>(null);
+  const isContinuousRef = useRef(false);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTranscriptRef = useRef<string>("");
 
-  // Initialize Speech Recognition
+  // Carrega configurações iniciais do Admin (BD)
+  useEffect(() => {
+    const fetchConfig = async () => {
+      const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+      const { data } = await supabase.from('events').select('personality').eq('id', eventId).single();
+      if (data && data.personality) {
+        try {
+          const config = JSON.parse(data.personality);
+          if (config.speed) setRate(config.speed);
+          if (config.pitch) setPitch(config.pitch);
+          // O volume e voiceURI locais ainda prevalecem se o usuário quiser sobrescrever durante a live
+        } catch (e) { }
+      }
+    };
+    fetchConfig();
+  }, [eventId]);
+
+  // Carrega as vozes disponíveis
+  useEffect(() => {
+    if (typeof window !== "undefined" && 'speechSynthesis' in window) {
+      const loadVoices = () => {
+        const availableVoices = window.speechSynthesis.getVoices().filter(v => v.lang.includes("pt") || v.lang.includes("PT"));
+        setVoices(availableVoices);
+        if (availableVoices.length > 0 && !voiceURI) {
+          // Define a primeira voz PT como padrão
+          setVoiceURI(availableVoices[0].voiceURI);
+        }
+      };
+      
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, [voiceURI]);
+
+  // Inicializa o Reconhecimento de Voz (Web Speech API)
   useEffect(() => {
     if (typeof window !== "undefined") {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
         recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = false;
-        recognitionRef.current.interimResults = false;
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true; // Mostra o texto em tempo real!
         recognitionRef.current.lang = 'pt-BR';
 
         recognitionRef.current.onstart = () => {
-          setIsListening(true);
+          isContinuousRef.current = true;
+          setAiState("listening");
+          setCurrentText("DIGITALENT em escuta contínua.\nFale a sua pergunta e aguarde 4 segundos...");
         };
 
         recognitionRef.current.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript;
-          setJarvisTranscript(transcript);
-          processJarvisCommand(transcript);
+          // Captura o histórico completo da fala atual
+          let fullTranscript = '';
+          for (let i = 0; i < event.results.length; ++i) {
+            fullTranscript += event.results[i][0].transcript;
+          }
+          
+          const transcript = fullTranscript.toLowerCase().trim();
+          lastTranscriptRef.current = transcript;
+          
+          // Dá um feedback visual na tela para o utilizador saber que o mic está a funcionar
+          if (aiState === "listening" || isContinuousRef.current) {
+            setCurrentText(`🗣️ "${transcript}..."`);
+          }
+
+          // Cancela o timer anterior se a pessoa continuar falando
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+          }
+
+          // Verifica se tem o Wake Word imediatamente para atalho (opcional)
+          if (transcript.includes("digitalent") || transcript.includes("talent") || transcript.includes("olá digitalent") || transcript.includes("agente")) {
+             if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+             setCurrentText(`✨ Processando comando...`);
+             processAICommand(transcript);
+             return;
+          }
+
+          // Configura o novo timer de 4 segundos de silêncio
+          silenceTimerRef.current = setTimeout(() => {
+            const finalSpeech = lastTranscriptRef.current;
+            if (finalSpeech.length > 3 && isContinuousRef.current && aiState !== "processing") {
+               setCurrentText(`✨ Silêncio detectado. Processando: "${finalSpeech}"`);
+               processAICommand(finalSpeech);
+            }
+          }, 4000);
         };
 
         recognitionRef.current.onerror = (event: any) => {
           console.error("Speech recognition error", event.error);
-          setIsListening(false);
+          isContinuousRef.current = false;
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          setAiState("idle");
+          setCurrentText(`Erro do Navegador (${event.error}): O Microfone foi bloqueado. Certifique-se de usar o link com HTTPS!`);
         };
 
         recognitionRef.current.onend = () => {
-          setIsListening(false);
+          // Se o sistema estiver ativo mas a API caiu (timeout padrão do browser), reiniciamos imediatamente.
+          if (isContinuousRef.current && aiState !== "processing" && aiState !== "speaking") {
+            try {
+              recognitionRef.current.start();
+            } catch (e) {}
+          }
         };
+      } else {
+        setCurrentText("O seu navegador não suporta a gravação de voz (Tente usar o Google Chrome).");
       }
     }
   }, [eventId]);
 
   const toggleListening = () => {
-    if (isListening) {
+    if (aiState === "listening") {
+      isContinuousRef.current = false;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       recognitionRef.current?.stop();
+      setAiState("idle");
+      setCurrentText("Microfone desligado. Toque para iniciar.");
     } else {
-      setJarvisTranscript("");
-      setJarvisResponse("");
-      recognitionRef.current?.start();
+      try {
+        if (!recognitionRef.current) {
+           setCurrentText("O seu navegador não suporta a gravação de voz.");
+           return;
+        }
+        recognitionRef.current.start();
+      } catch (e: any) {
+        console.error(e);
+        setCurrentText("Erro ao iniciar o microfone: " + (e.message || "Bloqueado pelo celular. Tente usar o Computador."));
+      }
     }
   };
 
-  const processJarvisCommand = async (transcript: string) => {
+  const fallbackToNativeTTS = (text: string) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      
+      utterance.lang = 'pt-BR';
+      utterance.rate = rate;
+      utterance.pitch = pitch;
+      utterance.volume = volume;
+      
+      if (voiceURI) {
+        const selectedVoice = window.speechSynthesis.getVoices().find(v => v.voiceURI === voiceURI);
+        if (selectedVoice) utterance.voice = selectedVoice;
+      }
+      
+      utterance.onend = () => {
+        isContinuousRef.current = true;
+        try { recognitionRef.current?.start(); } catch (e) {}
+      };
+      
+      utterance.onerror = (e) => {
+        console.error("Erro no áudio:", e);
+        isContinuousRef.current = true;
+        try { recognitionRef.current?.start(); } catch (err) {}
+      };
+
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    } else {
+      const readingTime = Math.max(3000, text.length * 60);
+      setTimeout(() => {
+        isContinuousRef.current = true;
+        try { recognitionRef.current?.start(); } catch (e) {}
+      }, readingTime);
+    }
+  };
+
+  const processAICommand = async (transcript: string) => {
     try {
-      setJarvisProcessing(true);
+      isContinuousRef.current = false; // Pausa a escuta contínua para não se ouvir a si mesma
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      recognitionRef.current?.stop();
+      lastTranscriptRef.current = ""; // Limpa a memória
+
+      setAiState("processing");
+      setCurrentText("A processar a sua fala...");
+      
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId, speakerId: speakerData?.id, command: transcript })
+        body: JSON.stringify({ eventId, command: transcript })
       });
+      
       const data = await res.json();
+      
       if (data.reply) {
-        setJarvisResponse(data.reply);
-        // Opcional: já falar automaticamente a resposta
-        // playVoice('jarvis_global', data.reply);
+        setAiState("speaking");
+        setCurrentText(data.reply);
+        
+        // Se a API retornou áudio (via ElevenLabs), nós o tocamos primeiro
+        if (data.audioBase64) {
+          const audio = new Audio("data:audio/mp3;base64," + data.audioBase64);
+          audio.volume = volume;
+          
+          audio.onended = () => {
+            isContinuousRef.current = true;
+            try { recognitionRef.current?.start(); } catch (e) {}
+          };
+
+          audio.onerror = (e) => {
+            console.error("Erro no áudio ElevenLabs:", e);
+            fallbackToNativeTTS(data.reply);
+          };
+
+          audio.play().catch((e) => {
+             console.error("Falha ao dar play no áudio", e);
+             fallbackToNativeTTS(data.reply);
+          });
+          return;
+        }
+
+        // Falar a resposta usando o sintetizador de voz do navegador (Native Fallback)
+        fallbackToNativeTTS(data.reply);
+
+      } else {
+        isContinuousRef.current = true;
+        try { recognitionRef.current?.start(); } catch (e) {}
+        setCurrentText("Desculpe, não consegui obter uma resposta. Tente dizer 'Digitalent' novamente.");
       }
     } catch (e) {
       console.error(e);
-    } finally {
-      setJarvisProcessing(false);
+      isContinuousRef.current = true;
+      try { recognitionRef.current?.start(); } catch (e) {}
+      setCurrentText("Erro ao conectar com a DIGITALENT.");
     }
   };
 
-  const playVoice = async (id: string, defaultText: string) => {
-    try {
-      setIsLoadingAudio(id);
-      const textToSpeak = editedTexts[id] || defaultText;
-      const response = await fetch('/api/ai/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textToSpeak, voice_id: eventData?.voice_id || 'onyx', speed })
-      });
-      
-      if (!response.ok) throw new Error("Erro ao gerar áudio");
-      
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      
-      audio.onplay = () => {
-        setPlayingId(id);
-        setIsLoadingAudio(null);
-      };
-      
-      audio.onended = () => {
-        setPlayingId(null);
-        URL.revokeObjectURL(url);
-      };
-      
-      audio.play();
-    } catch (err) {
-      console.error(err);
-      setIsLoadingAudio(null);
-      alert("Falha ao tocar o áudio da IA.");
-    }
-  };
-
-  const generateEventFlow = async () => {
-    if (!activeSession) return;
-    setIsFlowLoading(true);
-    try {
-      const res = await fetch('/api/event-flow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: activeSession.id })
-      });
-      if (!res.ok) throw new Error('Falha ao gerar direcionamento');
-      const data = await res.json();
-      if (data.message) {
-        alert(data.message);
-      } else {
-        setEventFlow(data);
-      }
-    } catch (error) {
-      console.error(error);
-      alert('Erro ao gerar direção da IA.');
-    } finally {
-      setIsFlowLoading(false);
-    }
-  };
-
-  const supabase = createClient();
-
-  // Busca Inicial
+  // Animação das barras de áudio (Speaking)
   useEffect(() => {
-    const fetchEventArchitecture = async () => {
-      const { data: event } = await supabase.from("events").select("*").eq("id", eventId).single();
-      if (event) setEventData(event);
+    if (aiState !== "speaking") return;
+    const interval = setInterval(() => {
+      setBars(prev => prev.map(() => 20 + Math.random() * 80));
+    }, 150);
+    return () => clearInterval(interval);
+  }, [aiState]);
 
-      const { data: session } = await supabase
-        .from("sessions")
-        .select("*")
-        .eq("event_id", eventId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
-      
-      if (session) {
-        setActiveSession(session);
-        
-        if (session.speaker_id) {
-          const { data: speaker } = await supabase.from("speakers").select("*").eq("id", session.speaker_id).single();
-          if (speaker) setSpeakerData(speaker);
-        }
-
-        const { data: qData } = await supabase
-          .from("questions")
-          .select("*")
-          .eq("session_id", session.id)
-          .order("created_at", { ascending: false });
-
-        if (qData) setQuestions(qData);
+  // Atalho do teclado (Spacebar) para ligar/desligar o microfone
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        e.preventDefault(); // Evita rolar a página
+        toggleListening();
       }
-      setIsLoading(false);
     };
-
-    fetchEventArchitecture();
-  }, [eventId, supabase]);
-
-  // Inscrição Realtime (Agora escuta todas as mudanças passivamente, sem polling)
-  useEffect(() => {
-    if (!activeSession) return;
-
-    const channel = supabase
-      .channel(`live-questions-${activeSession.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "questions", filter: `session_id=eq.${activeSession.id}` },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            setQuestions((prev) => [payload.new as Question, ...prev]);
-          } else if (payload.eventType === "UPDATE") {
-            setQuestions((prev) => prev.map((q) => (q.id === payload.new.id ? (payload.new as Question) : q)));
-          } else if (payload.eventType === "DELETE") {
-            setQuestions((prev) => prev.filter((q) => q.id !== payload.old.id));
-          }
-        }
-      )
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [activeSession, supabase]);
-
-
-  if (isLoading) {
-    return <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-white">Carregando painel ao vivo...</div>;
-  }
-
-  // O Painel agora mostra: 'pending' (novas), 'processing' (IA capturou), e 'approved' (IA terminou)
-  const displayQuestions = questions.filter(q => ['pending', 'processing', 'approved'].includes(q.status));
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [aiState]);
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-white font-sans p-6">
-      <div className="mb-6">
-        <Link href="/admin" className="text-neutral-500 hover:text-white transition-colors text-sm font-medium flex items-center gap-1 w-fit">
-          ← Voltar para Painel Global
-        </Link>
-      </div>
+    <div className="min-h-screen bg-[#050505] text-white flex flex-col justify-between p-8 md:p-16 overflow-hidden selection:bg-purple-500/30">
       
-      <header className="mb-8 flex justify-between items-center bg-neutral-900 p-6 rounded-2xl border border-neutral-800">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-3">
-            {eventData?.title || "Painel de Controle"}
-            <span className="bg-purple-500/20 text-purple-400 border border-purple-500/50 text-xs px-2 py-1 rounded-full flex items-center gap-1">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path></svg>
-              AI Cloud Batch Ativo
-            </span>
-          </h1>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-neutral-400">Status das Perguntas:</span>
-            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${questionsOpen ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-              <div className={`w-2 h-2 rounded-full ${questionsOpen ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`}></div>
-              {questionsOpen ? 'Abertas' : 'Fechadas'}
-            </div>
+      {/* BOTÃO INVISÍVEL GIGANTE PARA TOUCH NO CELULAR */}
+      <button 
+        onClick={toggleListening}
+        onTouchStart={(e) => { 
+          if (isSettingsOpen) return; // Não ativa o microfone se estiver a mexer no menu
+          e.preventDefault(); 
+          toggleListening(); 
+        }}
+        className={`fixed inset-0 w-full h-full z-40 cursor-pointer bg-transparent outline-none ${isSettingsOpen ? 'pointer-events-none' : ''}`}
+        style={{ WebkitTapHighlightColor: 'transparent', touchAction: 'manipulation' }}
+        aria-label="Pressione em qualquer lugar para falar"
+      />
+
+      {/* HEADER BAR */}
+      <header className="flex justify-between items-center opacity-70 hover:opacity-100 transition-opacity relative z-50">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center">
+            <span className="font-bold text-lg">AI</span>
           </div>
+          <div className="pointer-events-none">
+            <h1 className="text-2xl font-bold tracking-tight">DIGITALENT Teleprompter</h1>
+            <p className="text-neutral-500 font-medium">Tech Summit 2026</p>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 px-6 py-3 rounded-full pointer-events-none">
+            <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
+            <span className="text-red-400 font-bold uppercase tracking-widest hidden sm:inline-block">No Ar</span>
+          </div>
+          <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-3 bg-white/5 hover:bg-white/10 rounded-full transition-colors border border-white/10 text-neutral-300 hover:text-white pointer-events-auto"
+            title="Configurações de Voz"
+          >
+            <Settings className="w-6 h-6" />
+          </button>
         </div>
       </header>
 
-      {!activeSession ? (
-        <div className="bg-neutral-900 p-12 text-center rounded-2xl border border-neutral-800">
-          <h2 className="text-xl text-red-400 mb-2">Nenhuma sessão ativa</h2>
+      {/* MAIN TEXT AREA */}
+      <main className="flex-1 flex items-center justify-center py-12 relative z-10 pointer-events-none">
+        <h2 className={`text-5xl md:text-7xl font-bold leading-[1.2] text-center max-w-6xl transition-all duration-700 ${
+          aiState === "listening" ? "text-neutral-600 scale-95" : 
+          aiState === "processing" ? "text-indigo-400 animate-pulse" :
+          "text-white scale-100"
+        }`}>
+          {currentText}
+        </h2>
+      </main>
+
+      {/* AI VISUALIZER FOOTER */}
+      <footer className="flex flex-col items-center justify-center gap-10 pb-8 relative z-10 pointer-events-none">
+        <p className={`text-sm uppercase tracking-widest font-bold transition-colors ${
+          aiState === "speaking" ? "text-purple-400" : 
+          aiState === "listening" ? "text-red-500" :
+          aiState === "processing" ? "text-indigo-400" :
+          "text-neutral-600"
+        }`}>
+          {aiState === "speaking" ? "A DIGITALENT está a falar" : 
+           aiState === "listening" ? "A DIGITALENT está a ouvir" : 
+           aiState === "processing" ? "A DIGITALENT está a pensar..." : 
+           "Sistema em modo de espera"}
+          <span className="block text-center text-xs opacity-50 mt-3 text-neutral-500">
+            (Toque em qualquer lugar da tela para falar)
+          </span>
+        </p>
+
+        {/* AI CORE VISUALIZATION */}
+        <div className="relative flex items-center justify-center h-32 w-full">
+          {aiState === "listening" ? (
+            // LISTENING MODE: Pulsing Red Microphone
+            <div className="flex items-center justify-center relative">
+              <div className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-20 scale-150"></div>
+              <div className="absolute inset-0 bg-red-500/30 rounded-full animate-pulse scale-125"></div>
+              <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center z-10 shadow-[0_0_60px_rgba(220,38,38,0.6)]">
+                <Mic className="w-10 h-10 text-white" />
+              </div>
+            </div>
+          ) : aiState === "speaking" ? (
+          <div className="flex items-end gap-1.5 h-16 pointer-events-auto cursor-pointer" onClick={toggleListening} title="Toque para parar a fala">
+            {bars.map((height, i) => (
+              <div 
+                key={i} 
+                className="w-2 md:w-3 bg-gradient-to-t from-purple-600 to-indigo-400 rounded-t-full transition-all duration-150"
+                style={{ height: `${height}%` }}
+              ></div>
+            ))}
+          </div>
+        ) : (
+          <div 
+            onClick={toggleListening}
+            className={`w-24 h-24 rounded-full flex items-center justify-center transition-all cursor-pointer pointer-events-auto shadow-2xl ${
+              aiState === "listening" ? "bg-red-600 shadow-red-600/50 scale-110 animate-pulse" : 
+              aiState === "processing" ? "bg-indigo-600 shadow-indigo-600/50 animate-bounce" :
+              "bg-neutral-800 hover:bg-neutral-700 hover:scale-105"
+            }`}
+          >
+            <Mic className={`w-10 h-10 ${aiState === "listening" ? "text-white" : "text-neutral-400"}`} />
+          </div>
+        )}
         </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="space-y-6">
-            <div className="bg-neutral-900 p-6 rounded-2xl border border-neutral-800">
-              <h2 className="text-lg font-semibold mb-4 border-b border-neutral-800 pb-2">Resumo da IA</h2>
-              
-              <div className="space-y-4 mb-6 bg-neutral-950 p-4 rounded-xl border border-neutral-800">
-                <h3 className="font-medium text-sm text-neutral-300">Configuração da voz</h3>
-                
-                <div>
-                  <label className="block text-xs text-neutral-400 mb-1">Velocidade: {speed.toFixed(2)}x</label>
-                  <input 
-                    type="range" 
-                    min="0.5" 
-                    max="2.0" 
-                    step="0.05"
-                    value={speed}
-                    onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                    className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                  <p className="text-[10px] text-neutral-500 mt-2">As alterações valem para o próximo clique em Falar.</p>
-                </div>
-              </div>
+      </footer>
 
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-full flex items-center justify-center text-xl font-bold">
-                  {speakerData?.name?.charAt(0) || "P"}
-                </div>
-                <div>
-                  <p className="font-medium text-lg">{speakerData?.name || "Indefinido"}</p>
-                  <p className="text-sm text-neutral-400">{activeSession.title}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* J.A.R.V.I.S Walkie-Talkie Panel */}
-            <div className="bg-neutral-900 p-6 rounded-2xl border border-indigo-500/30 relative overflow-hidden">
-              <h2 className="text-lg font-semibold mb-4 border-b border-neutral-800 pb-2 flex justify-between items-center text-indigo-400">
-                J.A.R.V.I.S
-                {isListening && (
-                  <span className="flex items-center gap-2 text-[10px] px-2 py-1 bg-red-500/20 text-red-300 rounded-full uppercase tracking-widest animate-pulse">
-                    <div className="w-2 h-2 bg-red-400 rounded-full"></div> ESCUTANDO
-                  </span>
-                )}
-              </h2>
-              
-              <button 
-                onClick={toggleListening}
-                className={`w-full h-32 mb-6 rounded-2xl font-bold transition-all flex flex-col justify-center items-center gap-3 shadow-lg border-2 
-                  ${isListening ? 'bg-red-600 border-red-400 text-white shadow-[0_0_20px_rgba(220,38,38,0.5)] animate-pulse' : 
-                    jarvisProcessing ? 'bg-blue-600/50 border-blue-400 text-blue-200' : 
-                    'bg-neutral-800 hover:bg-neutral-700 border-neutral-600 text-neutral-300'}`}
-              >
-                {jarvisProcessing ? (
-                  <><svg className="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> <span className="text-sm">PROCESSANDO...</span></>
-                ) : isListening ? (
-                  <><svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg> <span className="text-sm">FALE AGORA (OU CLIQUE PARA PARAR)</span></>
-                ) : (
-                  <><svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg> <span className="text-sm">CLIQUE PARA FALAR</span></>
-                )}
+      {/* SETTINGS MODAL */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-[#111] border border-neutral-800 rounded-2xl w-full max-w-md p-6 shadow-2xl shadow-indigo-500/10">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <Settings className="w-5 h-5 text-indigo-400" />
+                Voz da IA
+              </h3>
+              <button onClick={() => setIsSettingsOpen(false)} className="text-neutral-500 hover:text-white transition-colors">
+                <X className="w-6 h-6" />
               </button>
+            </div>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-neutral-400 mb-2 flex items-center gap-2">
+                  <Mic className="w-4 h-4" /> Escolher Voz (Disponíveis no seu Celular/PC)
+                </label>
+                <select 
+                  value={voiceURI} 
+                  onChange={(e) => setVoiceURI(e.target.value)}
+                  className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500"
+                >
+                  {voices.length === 0 && <option value="">Nenhuma voz em PT encontrada</option>}
+                  {voices.map(v => (
+                    <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>
+                  ))}
+                </select>
+                {voices.length === 0 && <p className="text-xs text-red-400 mt-2">Dica: No celular, certifique-se que o idioma Português está baixado nas definições de acessibilidade.</p>}
+              </div>
 
-              <div className="space-y-4 relative z-10">
-                {jarvisTranscript && (
-                  <div>
-                    <h3 className="text-xs text-neutral-500 uppercase tracking-wider mb-1">Você disse:</h3>
-                    <p className="text-sm text-neutral-300 italic">&quot;{jarvisTranscript}&quot;</p>
-                  </div>
-                )}
-                
-                {jarvisResponse && (
-                  <div className="bg-indigo-500/10 border border-indigo-500/30 p-4 rounded-xl">
-                    <h3 className="text-xs text-indigo-400 uppercase tracking-wider mb-2 font-bold">Resposta do J.A.R.V.I.S:</h3>
-                    <p className="text-white text-sm leading-relaxed mb-4">
-                      {jarvisResponse}
-                    </p>
-                    <button 
-                      onClick={() => playVoice('jarvis_global', jarvisResponse)}
-                      disabled={isLoadingAudio === 'jarvis_global' || playingId === 'jarvis_global'}
-                      className={`w-full py-2 rounded-lg font-bold transition-all flex justify-center items-center gap-2 text-sm
-                        ${playingId === 'jarvis_global' ? 'bg-purple-600 text-white animate-pulse' : 
-                        isLoadingAudio === 'jarvis_global' ? 'bg-blue-500/20 text-blue-400' : 
-                        'bg-indigo-600 hover:bg-indigo-500 text-white'}`}
-                    >
-                      {isLoadingAudio === 'jarvis_global' ? 'Gerando Áudio...' : playingId === 'jarvis_global' ? '🔊 Falando...' : '🗣️ Falar Resposta'}
-                    </button>
-                  </div>
-                )}
+              <div>
+                <label className="block text-sm font-medium text-neutral-400 mb-2 flex justify-between items-center">
+                  <span className="flex items-center gap-2"><Gauge className="w-4 h-4" /> Velocidade</span>
+                  <span className="text-indigo-400">{rate}x</span>
+                </label>
+                <input type="range" min="0.5" max="2.0" step="0.1" value={rate} onChange={(e) => setRate(parseFloat(e.target.value))} className="w-full accent-indigo-500" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-400 mb-2 flex justify-between items-center">
+                  <span className="flex items-center gap-2"><Activity className="w-4 h-4" /> Tom (Pitch)</span>
+                  <span className="text-indigo-400">{pitch}</span>
+                </label>
+                <input type="range" min="0.5" max="2.0" step="0.1" value={pitch} onChange={(e) => setPitch(parseFloat(e.target.value))} className="w-full accent-indigo-500" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-400 mb-2 flex justify-between items-center">
+                  <span className="flex items-center gap-2"><Volume2 className="w-4 h-4" /> Volume</span>
+                  <span className="text-indigo-400">{Math.round(volume * 100)}%</span>
+                </label>
+                <input type="range" min="0" max="1" step="0.1" value={volume} onChange={(e) => setVolume(parseFloat(e.target.value))} className="w-full accent-indigo-500" />
+              </div>
+
+              <div className="pt-4 border-t border-neutral-800">
+                <button 
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 rounded-lg transition-colors shadow-lg shadow-indigo-600/20"
+                >
+                  Confirmar Configurações
+                </button>
               </div>
             </div>
           </div>
-
-          <div className="lg:col-span-2 bg-neutral-900 p-6 rounded-2xl border border-neutral-800 flex flex-col h-[calc(100vh-160px)]">
-            <div className="flex justify-between items-center mb-6 border-b border-neutral-800 pb-4">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                Feed Inteligente (AI)
-                <span className="bg-neutral-800 text-xs py-1 px-2 rounded-full">{displayQuestions.length}</span>
-              </h2>
-            </div>
-
-            <div className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
-              {displayQuestions.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-neutral-500">
-                  <p>Aguardando perguntas da audiência...</p>
-                </div>
-              ) : (
-                displayQuestions.map((q) => (
-                  <div key={q.id} className={`p-5 rounded-xl border transition-colors ${
-                    q.status === 'approved' ? 'bg-purple-500/5 border-purple-500/30' : 
-                    q.status === 'processing' ? 'bg-blue-500/5 border-blue-500/30 opacity-70' :
-                    'bg-neutral-950 border-neutral-800'
-                  }`}>
-                    <div className="flex justify-between items-start mb-2">
-                      <span className={`font-semibold flex items-center gap-2 ${
-                        q.status === 'approved' ? 'text-purple-400' : 
-                        q.status === 'processing' ? 'text-blue-400' : 
-                        'text-emerald-400'
-                      }`}>
-                        {q.status === 'approved' && <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path></svg>}
-                        {q.status === 'processing' && <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
-                        {q.author_name}
-                      </span>
-                      <span className="text-xs text-neutral-500">
-                        {new Date(q.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <p className={`text-lg mb-4 ${q.status === 'approved' ? 'text-white' : 'text-neutral-300'}`}>{q.content}</p>
-                    
-                    {q.status === 'approved' && q.suggested_answer && (
-                      <div className="mt-4 bg-neutral-950/50 rounded-lg p-4 border border-purple-500/20 space-y-3">
-                        <div className="flex flex-col gap-3">
-                          <label className="text-sm font-medium text-neutral-300">Texto que a IA vai falar</label>
-                          <textarea
-                            className="w-full h-24 bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
-                            value={editedTexts[q.id] !== undefined ? editedTexts[q.id] : `${q.transition} ${q.suggested_answer}`}
-                            onChange={(e) => setEditedTexts({ ...editedTexts, [q.id]: e.target.value })}
-                          />
-                          
-                          <div className="grid grid-cols-2 gap-2 mt-2">
-                            <button
-                              onClick={() => processPendingAI()}
-                              className="bg-neutral-800 hover:bg-neutral-700 text-blue-400 font-bold py-2 px-4 rounded-lg transition-colors text-sm"
-                            >
-                              Gerar roteiro IA
-                            </button>
-                            <button
-                              className="bg-neutral-800 hover:bg-neutral-700 text-blue-400 font-bold py-2 px-4 rounded-lg transition-colors text-sm"
-                            >
-                              Voltar
-                            </button>
-                            <button
-                              className="bg-neutral-800 hover:bg-neutral-700 text-blue-400 font-bold py-2 px-4 rounded-lg transition-colors text-sm"
-                            >
-                              Próxima
-                            </button>
-                            <button
-                              onClick={() => playVoice(q.id, `${q.transition} ${q.suggested_answer}`)}
-                              disabled={isLoadingAudio === q.id || playingId === q.id}
-                              className={`font-bold py-2 px-4 rounded-lg transition-all text-sm flex justify-center items-center gap-2
-                                ${playingId === q.id ? 'bg-purple-600 text-white animate-pulse' : 
-                                  isLoadingAudio === q.id ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 
-                                  'bg-neutral-800 hover:bg-neutral-700 text-blue-400'}`}
-                            >
-                              {isLoadingAudio === q.id ? (
-                                <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Gerando...</>
-                              ) : playingId === q.id ? (
-                                <>🔊 Falando...</>
-                              ) : (
-                                <>🗣️ Falar</>
-                              )}
-                            </button>
-                          </div>
-                          
-                          <div className="flex flex-col gap-2 mt-2">
-                            <button
-                              className="bg-neutral-800 hover:bg-neutral-700 text-blue-400 font-bold py-2 px-4 rounded-lg transition-colors text-sm w-fit"
-                            >
-                              Reiniciar IA
-                            </button>
-                            <button
-                              className="bg-neutral-800 hover:bg-neutral-700 text-blue-400 font-bold py-2 px-4 rounded-lg transition-colors text-sm w-fit"
-                            >
-                              Limpar perguntas
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    
-                    <div className="flex justify-between items-center mt-4 pt-4 border-t border-neutral-800/50">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-medium uppercase tracking-wider px-2 py-1 rounded ${
-                          q.status === 'approved' ? 'text-purple-400 bg-purple-400/10' : 
-                          q.status === 'processing' ? 'text-blue-400 bg-blue-400/10' :
-                          'text-amber-500 bg-amber-500/10'
-                        }`}>
-                          {q.status === 'approved' ? 'Aprovado pela IA' : 
-                           q.status === 'processing' ? 'A IA está lendo...' : 
-                           'Na fila'}
-                        </span>
-                        {q.ai_score && q.ai_score > 1 && (
-                          <span className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1 rounded-full">
-                            Agrupou {q.ai_score} perguntas
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
         </div>
       )}
     </div>

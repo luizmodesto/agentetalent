@@ -5,7 +5,7 @@ export default function Home() {
     <div className="min-h-screen bg-neutral-950 flex flex-col items-center justify-center p-4 text-white font-sans">
       <div className="w-full max-w-md bg-neutral-900 p-8 rounded-2xl shadow-2xl border border-neutral-800 text-center">
         <h1 className="text-4xl font-bold bg-gradient-to-r from-purple-400 to-emerald-400 bg-clip-text text-transparent mb-4">
-          Talent AI
+          DIGITALENT
         </h1>
         <p className="text-neutral-400 mb-8">
           O Cérebro do seu evento ao vivo.
