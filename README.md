@@ -51,3 +51,28 @@ Abra [http://localhost:3000](http://localhost:3000) com o seu navegador para ver
 ## Próximos Passos (Para a Próxima Sessão):
 - Revisar a estabilidade do fluxo de áudio ao vivo no telemóvel e no PC em ambientes reais de evento.
 - Analisar novas funcionalidades solicitadas no painel.
+
+---
+
+## 🚀 Como Fazer o Deploy e Autenticar no Git (Resolução de Erros)
+
+Sempre que perder a autenticação do Github e receber o Erro 403 (Permission Denied) ao tentar fazer `git push`, siga estes passos:
+
+1. **Forçar Login no GitHub pelo Terminal:**
+   Abra o seu terminal no VS Code (ou Powershell) e execute:
+   ```bash
+   git credential-manager github login
+   ```
+   *Isto abrirá uma janela do navegador para autorizar o repositório na sua conta.*
+
+2. **Subir o Código (Push):**
+   Após a autenticação ser bem sucedida, faça o push normal:
+   ```bash
+   git push
+   ```
+
+3. **Deploy Manual para a Vercel:**
+   Se a compilação falhar na Vercel devido a pacotes (como a Nuvem de Palavras) com erros de "ERESOLVE" / Dependências, **use sempre a flag de legacy-peer-deps**. Execute o comando abaixo no seu terminal para forçar o deploy pela Vercel:
+   ```bash
+   npx vercel --prod --build-env NPM_CONFIG_LEGACY_PEER_DEPS=true
+   ```
