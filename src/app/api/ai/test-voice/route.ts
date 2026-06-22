@@ -1,12 +1,48 @@
 import { NextResponse } from 'next/server';
+import OpenAI from 'openai';
+
+export const runtime = 'edge';
 
 export async function POST(request: Request) {
   try {
-    const { provider, apiKey, voiceId, text, speed, pitch } = await request.json();
+    const { provider, apiKey, voiceId, text, speed, pitch, tone, rhythm, storytelling, language } = await request.json();
 
     if (!text || !provider || !apiKey) {
       return NextResponse.json({ error: 'Faltam parâmetros obrigatórios.' }, { status: 400 });
     }
+
+    let finalSynthesizeText = text;
+
+    if (tone) {
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
+      let systemPrompt = `Gere uma única frase curta (máximo 15 palavras) para testar um sistema de som em um evento. A frase deve indicar que o sistema está a ser testado e que o palco está pronto. O evento chama-se Digitalent'26. Adapte estritamente o tom da frase baseado nos parâmetros abaixo:\n`;
+      if (tone) systemPrompt += `- Tom: ${tone}\n`;
+      if (rhythm) systemPrompt += `- Ritmo: ${rhythm}\n`;
+      if (storytelling) systemPrompt += `- Nível de Storytelling: ${storytelling}/10\n`;
+      
+      if (language === 'en-US') {
+           systemPrompt += `- Idioma: strictly American English (en-US).\n`;
+      } else if (language === 'pt-BR') {
+           systemPrompt += `- Idioma: Português do Brasil.\n`;
+      } else {
+           systemPrompt += `- Idioma: estritamente Português de Portugal (PT-PT). Proibido usar gerúndios.\n`;
+      }
+
+      try {
+          const response = await openai.chat.completions.create({
+              model: "gpt-4o",
+              messages: [{ role: "system", content: systemPrompt }, { role: "user", content: "Gere a frase de teste de áudio agora."}],
+              temperature: 0.7,
+              max_tokens: 50
+          });
+          if (response.choices[0].message.content) {
+              finalSynthesizeText = response.choices[0].message.content.trim();
+          }
+      } catch (e) {
+          console.error("Erro ao gerar frase dinâmica GPT-4o para teste", e);
+      }
+    }
+
 
     if (provider === "fishaudio") {
       const fishResponse = await fetch(`https://api.fish.audio/v1/tts`, {
@@ -16,7 +52,7 @@ export async function POST(request: Request) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          text: text,
+          text: finalSynthesizeText,
           format: 'mp3',
           reference_id: voiceId || undefined
         })
@@ -41,7 +77,7 @@ export async function POST(request: Request) {
           'xi-api-key': apiKey
         },
         body: JSON.stringify({
-          text: text,
+          text: finalSynthesizeText,
           model_id: "eleven_multilingual_v2",
           voice_settings: { stability: 0.5, similarity_boost: 0.75 }
         })
@@ -71,7 +107,7 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           model: "tts-1",
           voice: voiceId || "onyx",
-          input: text
+          input: finalSynthesizeText
         })
       });
 

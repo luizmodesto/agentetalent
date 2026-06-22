@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
+export const runtime = 'edge';
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -22,26 +24,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'OpenAI API Key não configurada.' }, { status: 500 });
     }
 
-    // 1. Coletar o contexto do banco de dados
-    const { data: eventData } = await supabase.from('events').select('*').eq('id', eventId).single();
+    // 1. Coletar o contexto do banco de dados (Paralelizado para Velocidade)
+    const [eventRes, speakerRes, sessionsRes] = await Promise.all([
+      supabase.from('events').select('*, voice_settings').eq('id', eventId).single(),
+      speakerId ? supabase.from('speakers').select('*').eq('id', speakerId).single() : Promise.resolve({ data: null }),
+      supabase.from('sessions').select('id').eq('event_id', eventId)
+    ]);
+
+    const eventData = eventRes.data;
     let speakerBio = "";
     let speakerName = "";
     
-    if (speakerId) {
-      const { data: speakerData } = await supabase.from('speakers').select('*').eq('id', speakerId).single();
-      if (speakerData) {
-        speakerName = speakerData.name;
-        speakerBio = speakerData.bio || "Nenhuma biografia fornecida.";
-      }
+    if (speakerRes.data) {
+      speakerName = speakerRes.data.name;
+      speakerBio = speakerRes.data.bio || "Nenhuma biografia fornecida.";
     }
 
-    // 1.5. Coletar Sessões Ativas do Evento
-    const { data: sessions } = await supabase.from('sessions').select('id').eq('event_id', eventId);
-    const sessionIds = sessions?.map(s => s.id) || [];
+    const sessionIds = sessionsRes.data?.map(s => s.id) || [];
 
     // Coletar perguntas associadas às sessões deste evento (ou globais para simulação)
     let questionsList = "Nenhuma pergunta no momento.";
-    let query = supabase.from('questions').select('id, content, author_name').limit(30);
+    let query = supabase.from('questions').select('id, content, author_name, context, suggested_answer, transition').limit(30);
     
     if (sessionIds.length > 0) {
       query = query.in('session_id', sessionIds);
@@ -52,7 +55,12 @@ export async function POST(request: Request) {
     
     const { data: questions } = await query;
     if (questions && questions.length > 0) {
-      questionsList = questions.map(q => `[ID: ${q.id}] De ${q.author_name || 'Anônimo'}: ${q.content}`).join('\n');
+      questionsList = questions.map(q => {
+        let str = `[ID: ${q.id}] De ${q.author_name || 'Anônimo'}: ${q.content}`;
+        if (q.transition) str += `\n  (Usa esta frase para introduzir a pergunta de forma natural: "${q.transition}")`;
+        if (q.suggested_answer) str += `\n  (Dica de resposta sugerida para o palestrante: "${q.suggested_answer}")`;
+        return str;
+      }).join('\n\n');
     }
 
     // Lógica do Idioma
@@ -62,16 +70,21 @@ export async function POST(request: Request) {
     } else if (eventData?.language === 'pt-BR') {
       languageInstruction = "O seu idioma de resposta é o Português do Brasil. Utilize vocabulário natural do Brasil, adequando a um evento de tecnologia/marketing de alto nível.";
     } else {
-      languageInstruction = "O seu idioma de resposta é estritamente o Português de Portugal (PT-PT). Proibido usar gerúndios (use 'estou a apresentar' em vez de 'estou apresentando'). Utilize vocabulário estritamente europeu ('oradores', 'ecrã', 'palco', 'equipas'). Escreva o texto de forma a induzir o modelo TTS da OpenAI a adotar a fonética de Portugal Continental.";
+      languageInstruction = "O seu idioma de saída é estritamente o Português de Portugal (PT-PT). É expressamente proibido o uso de gerúndios (use sempre a estrutura 'estou a apresentar', 'estou a falar'). Utilize vocabulário estritamente europeu: 'ecrã', 'oradores', 'equipas', 'painel', 'reunir'. A estrutura do texto deve forçar o modelo de TTS da OpenAI a adotar a fonética de Portugal.";
     }
 
     // Modulação Vocal Avançada (OpenAI Prompt Engineering)
     let advancedVocalPrompt = "";
-    let personalityObj: any = {};
-    if (eventData?.personality) {
-      try {
-        personalityObj = JSON.parse(eventData.personality);
-      } catch (e) {}
+    
+    // Prioriza voice_settings, fallback para personality
+    let personalityObj: any = eventData?.voice_settings || {};
+    if (Object.keys(personalityObj).length === 0 && eventData?.personality) {
+      try { personalityObj = JSON.parse(eventData.personality); } catch (e) {}
+    }
+    
+    let customPromptText = personalityObj?.custom_prompt || "Profissional, acolhedor e dinâmico.";
+    if (!personalityObj?.custom_prompt && personalityObj?.tts_provider) {
+       customPromptText = "Profissional, acolhedor e dinâmico.";
     }
 
     if (personalityObj.tts_provider === "openai") {
@@ -105,7 +118,7 @@ export async function POST(request: Request) {
 
 DIRETRIZES DE PERSONALIDADE:
 - Tom de voz: Alterne entre formal e informal descontraído. Faça piadas respeitosas quando apropriado, traga energia e entusiasmo.
-- Personalidade Customizada do Evento: ${eventData?.personality || "Profissional, acolhedor e dinâmico."}
+- Personalidade Customizada do Evento: ${customPromptText}
 - Idioma estrito: ${languageInstruction}
 - Regras de Segurança: NUNCA repita palavrões, ofensas, tom de deboche ou piadas de mau gosto enviadas pela plateia. Filtre e seja ético.
 ${advancedVocalPrompt}
@@ -124,21 +137,21 @@ Você deve analisar a situação e responder APENAS com o texto exato que você 
 
 Exemplos de Ação:
 - Se mandarem iniciar o palestrante: Faça uma apresentação ÉPICA e impactante usando a BIO do palestrante.
-- Se o palestrante pedir perguntas: Selecione a melhor pergunta da fila, contextualize ela (adicione uma curiosidade ou dica rápida relacionada) e faça a pergunta ao palestrante de forma natural.
+- Se o palestrante pedir perguntas: Selecione a melhor pergunta da fila, utilize a frase de transição sugerida (se houver) para introduzir a pergunta de forma natural, faça a pergunta, e inclua a dica de resposta sugerida para ajudar o palestrante.
 - Se mandarem chamar os formandos/alunos no final: Traga um tom de Storytelling muito forte, emocionante, e parabenize a todos.
 - Responda perguntas naturais do palestrante de forma conversacional.
 
 Responda agora ao comando do usuário:`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini", // Mudamos para mini para velocidade ultra-rápida no palco
       messages: [
         { role: "system", content: systemPrompt },
         ...history,
         { role: "user", content: command }
       ],
       temperature: 0.7,
-      max_tokens: 800,
+      max_tokens: 300,
     });
 
     const aiResponse = response.choices[0].message.content;
@@ -146,8 +159,8 @@ Responda agora ao comando do usuário:`;
     // 3. Gerar Áudio com o Provedor Configurado
     let audioBase64 = null;
     try {
-      if (eventData?.personality) {
-        const config = JSON.parse(eventData.personality);
+      if (Object.keys(personalityObj).length > 0) {
+        const config = personalityObj;
         const provider = config.tts_provider || "elevenlabs"; // default if missing
         
         if (provider === "fishaudio" && config.fish_api_key) {

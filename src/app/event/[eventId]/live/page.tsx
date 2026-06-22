@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, use } from "react";
-import { Mic, Settings, X, Volume2, Gauge, Activity } from "lucide-react";
+import { Mic, Settings, X, Volume2, Gauge, Activity, AlertCircle } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
+import WordCloud from "wordcloud";
 
 export default function SpeakerTeleprompter({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = use(params);
@@ -25,59 +26,113 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastTranscriptRef = useRef<string>("");
 
+  // Slider Mode State
+  const [isSliderMode, setIsSliderMode] = useState(false);
+  const isSliderModeRef = useRef(false);
+
   // Slide & Sponsors & Names State
   const [slideUrl, setSlideUrl] = useState<string>("");
+  const [slideIndex, setSlideIndex] = useState<number>(0);
   const [sponsors, setSponsors] = useState<string[]>([]);
   const [voiceCommands, setVoiceCommands] = useState({ next: "próxima página", prev: "retorna" });
-  const [authors, setAuthors] = useState<string[]>([]);
+  const [authorsData, setAuthorsData] = useState<{text: string, value: number}[]>([]);
   const [highlightedName, setHighlightedName] = useState<string | null>(null);
   
-  // Refs for Speech Recognition Access
+  // Custom colors for word cloud
+  const colors = ["#818cf8", "#c084fc", "#f472b6", "#34d399", "#facc15", "#60a5fa", "#ffffff"];
+  
+  const containerRef = useRef<HTMLDivElement>(null);
   const personalityRef = useRef<any>({});
+  
+  // Teleprompter Alert State
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const lastAlertTime = useRef<number>(0);
+  const [forceSpeakData, setForceSpeakData] = useState<{text: string, time: number} | null>(null);
+  const lastSpeakTime = useRef<number>(0);
 
   // Carrega configurações iniciais do Admin (BD)
   useEffect(() => {
     const fetchConfig = async () => {
       const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-      const { data } = await supabase.from('events').select('personality, language').eq('id', eventId).single();
+      const { data } = await supabase.from('events').select('personality, voice_settings, language').eq('id', eventId).single();
       
       // Fetch names from questions
       const { data: questionsData } = await supabase.from('questions').select('author_name').eq('status', 'approved');
-      if (questionsData) {
-        // Obter nomes únicos e remover nulos
-        const uniqueNames = Array.from(new Set(questionsData.map(q => q.author_name).filter(Boolean)));
-        setAuthors(uniqueNames as string[]);
-      }
+      let usedData = questionsData;
 
       // Hack para simulação caso o script tenha deixado as perguntas como pending sem sessão
-      if (!questionsData || questionsData.length === 0) {
+      if (!usedData || usedData.length === 0) {
          const { data: pendingData } = await supabase.from('questions').select('author_name').eq('status', 'pending');
-         if (pendingData) {
-            const uniqueNames = Array.from(new Set(pendingData.map(q => q.author_name).filter(Boolean)));
-            setAuthors(uniqueNames as string[]);
-         }
+         usedData = pendingData;
+      }
+
+      if (usedData) {
+        const counts: Record<string, number> = {};
+        usedData.forEach(q => {
+          if (q.author_name) counts[q.author_name] = (counts[q.author_name] || 0) + 1;
+        });
+        const mappedData = Object.entries(counts).map(([text, count]) => ({
+          text,
+          value: count * 5 + 10 // Tamanho ajustado para caber bem no SVG
+        }));
+        setAuthorsData(mappedData);
       }
 
       if (data) {
         if (data.language) setLanguage(data.language);
         if (data.personality) {
-        try {
-          const config = JSON.parse(data.personality);
-          personalityRef.current = config;
+          try {
+            const config = JSON.parse(data.personality);
+            personalityRef.current = config;
+            
+            // Prioriza voice_settings
+            let voiceConfig = data.voice_settings || {};
+            if (Object.keys(voiceConfig).length === 0) {
+               voiceConfig = config; // fallback to personality
+            }
+            
+            if (voiceConfig.speed) setRate(voiceConfig.speed);
+            if (voiceConfig.pitch) setPitch(voiceConfig.pitch);
+            if (voiceConfig.tts_provider === 'native' && voiceConfig.voice_id) {
+               setVoiceURI(voiceConfig.voice_id);
+            }
+            
+            if (config.sponsors && Array.isArray(config.sponsors)) setSponsors(config.sponsors);
+            if (config.voice_commands) setVoiceCommands(config.voice_commands);
+            
+            // Resolução do Slide Atual
+            if (config.slide_decks && config.active_speaker_id) {
+              const speakerSlides = config.slide_decks[config.active_speaker_id] || [];
+              const idx = config.current_slide_index || 0;
+              if (speakerSlides[idx]) setSlideUrl(speakerSlides[idx]);
+              setSlideIndex(idx);
+            } else if (config.current_slide) {
+              setSlideUrl(config.current_slide);
+              setSlideIndex(config.current_slide_index || 0);
+            }
+          } catch (e) {
+            console.error("Error parsing personality JSON", e);
+          }
+        }
+        
+        if (data.personality) {
+          try {
+             const config = JSON.parse(data.personality);
+             if (config.teleprompter_alert && config.teleprompter_alert_time) {
+             lastAlertTime.current = config.teleprompter_alert_time;
+             const timeSinceAlert = Date.now() - config.teleprompter_alert_time;
+             if (timeSinceAlert < 15000) {
+               setAlertMessage(config.teleprompter_alert);
+               setTimeout(() => setAlertMessage(null), 15000 - timeSinceAlert);
+             }
+          }
           
-          if (config.speed) setRate(config.speed);
-          if (config.pitch) setPitch(config.pitch);
-          
-          if (config.sponsors && Array.isArray(config.sponsors)) setSponsors(config.sponsors);
-          if (config.voice_commands) setVoiceCommands(config.voice_commands);
-          
-          // Resolução do Slide Atual
-          if (config.slide_decks && config.active_speaker_id) {
-            const speakerSlides = config.slide_decks[config.active_speaker_id] || [];
-            const idx = config.current_slide_index || 0;
-            if (speakerSlides[idx]) setSlideUrl(speakerSlides[idx]);
-          } else if (config.current_slide) {
-            setSlideUrl(config.current_slide);
+          if (config.ai_force_speak && config.ai_force_speak.time) {
+             lastSpeakTime.current = config.ai_force_speak.time;
+             const timeSinceSpeak = Date.now() - config.ai_force_speak.time;
+             if (timeSinceSpeak < 5000) {
+               setForceSpeakData(config.ai_force_speak);
+             }
           }
         } catch (e) { }
         }
@@ -85,12 +140,14 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
     };
     fetchConfig();
 
-    // Set up realtime listener for personality updates (so it changes slides in real-time)
     const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
     const channel = supabase.channel('event_updates')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, (payload) => {
         if (payload.new) {
           if (payload.new.language) setLanguage(payload.new.language);
+          
+          let voiceConfig = payload.new.voice_settings || {};
+
           if (payload.new.personality) {
             try {
               const config = JSON.parse(payload.new.personality);
@@ -99,13 +156,44 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
               if (config.sponsors) setSponsors(config.sponsors);
               if (config.voice_commands) setVoiceCommands(config.voice_commands);
               
+              if (config.slider_mode_active !== undefined && config.slider_mode_active !== isSliderModeRef.current) {
+                isSliderModeRef.current = config.slider_mode_active;
+                setIsSliderMode(config.slider_mode_active);
+              }
+
+              if (Object.keys(voiceConfig).length === 0) {
+                voiceConfig = config; // fallback to personality
+              }
+              
+              if (voiceConfig.speed) setRate(voiceConfig.speed);
+              if (voiceConfig.pitch) setPitch(voiceConfig.pitch);
+              if (voiceConfig.tts_provider === 'native' && voiceConfig.voice_id) {
+                 setVoiceURI(voiceConfig.voice_id);
+              }
+              
               // Resolução do Slide Atual
               if (config.slide_decks && config.active_speaker_id) {
                 const speakerSlides = config.slide_decks[config.active_speaker_id] || [];
                 const idx = config.current_slide_index || 0;
                 if (speakerSlides[idx]) setSlideUrl(speakerSlides[idx]);
+                setSlideIndex(idx);
               } else if (config.current_slide !== undefined) {
                 setSlideUrl(config.current_slide);
+                setSlideIndex(config.current_slide_index || 0);
+              }
+              
+              // Verifica se há um novo alerta do Teleprompter
+              if (config.teleprompter_alert && config.teleprompter_alert_time && config.teleprompter_alert_time !== lastAlertTime.current) {
+                 lastAlertTime.current = config.teleprompter_alert_time;
+                 setAlertMessage(config.teleprompter_alert);
+                 // Oculta o alerta após 15 segundos
+                 setTimeout(() => setAlertMessage(null), 15000);
+              }
+
+              // Verifica comando forçado de fala
+              if (config.ai_force_speak && config.ai_force_speak.time && config.ai_force_speak.time !== lastSpeakTime.current) {
+                 lastSpeakTime.current = config.ai_force_speak.time;
+                 setForceSpeakData(config.ai_force_speak);
               }
             } catch(e) {}
           }
@@ -177,7 +265,7 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
         recognitionRef.current.onstart = () => {
           isContinuousRef.current = true;
           setAiState("listening");
-          setCurrentText("DIGITALENT em escuta contínua.\nFale a sua pergunta e aguarde 4 segundos...");
+          setCurrentText(isSliderModeRef.current ? "📺 Apresentação Ativa: Fale o seu comando." : "DIGITALENT em escuta contínua. Fale a sua pergunta e aguarde 1.5 segundos...");
         };
 
         recognitionRef.current.onresult = (event: any) => {
@@ -201,37 +289,90 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
           }
 
           // Verifica Comandos de Slide
-          const conf = personalityRef.current;
-          if (conf && conf.voice_commands) {
-            const vNext = conf.voice_commands.next?.toLowerCase();
-            const vPrev = conf.voice_commands.prev?.toLowerCase();
-            let newIndex = conf.current_slide_index || 0;
-            let changed = false;
+          const conf = personalityRef.current || {};
+          const vNext = conf.voice_commands?.next?.toLowerCase() || 'próxima página';
+          const vPrev = conf.voice_commands?.prev?.toLowerCase() || 'retorna';
+          let newIndex = conf.current_slide_index || 0;
+          let changed = false;
 
-            if (vNext && transcript.includes(vNext)) {
-               newIndex++;
-               changed = true;
-            } else if (vPrev && transcript.includes(vPrev)) {
-               newIndex = Math.max(0, newIndex - 1);
-               changed = true;
-            }
+            const matchCommand = (spoken: string, expected: string, fallbacks: string[]) => {
+               if (fallbacks.some(f => spoken.includes(f))) return true;
+               if (!expected) return false;
+               if (spoken.includes(expected)) return true;
+               const mainWord = expected.split(' ')[0];
+               if (mainWord.length > 3 && spoken.includes(mainWord)) return true;
+               return false;
+            };
 
-            if (changed) {
+            // Triggers do Modo Slider
+            if (!isSliderModeRef.current && matchCommand(transcript, "", ['iniciar slider', 'inicia slider', 'iniciar o slider', 'inicia o slider', 'iniciar slide', 'inicia slide', 'iniciar apresentação', 'iniciar a apresentação', 'começar apresentação', 'começar a apresentação'])) {
+               isSliderModeRef.current = true;
+               setIsSliderMode(true);
                if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-               setCurrentText(`📺 Comando de Slide Detetado! Alterando slide...`);
+               setCurrentText("📺 Modo Apresentação Iniciado! Fale 'próxima' para avançar.");
+               try { recognitionRef.current.abort(); } catch(e) {}
                
-               // Limpa o último transcript para não repitir o trigger
-               event.results[event.results.length - 1][0].transcript = "";
-               
-               // Atualiza DB
-               conf.current_slide_index = newIndex;
+               // Sync with DB so Admin Panel sees it
+               conf.slider_mode_active = true;
                const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-               supabase.from('events').update({ personality: JSON.stringify(conf) }).eq('id', eventId).then(() => {
-                 setTimeout(() => { setCurrentText("DIGITALENT em escuta contínua."); }, 2000);
-               });
-               return; // Skip normal processing
+               supabase.from('events').update({ personality: JSON.stringify(conf) }).eq('id', eventId).then(() => {});
+               return;
             }
-          }
+
+            if (isSliderModeRef.current && matchCommand(transcript, "", ['terminar slider', 'termina slider', 'terminar o slider', 'termina o slider', 'terminar slide', 'termina slide', 'terminar apresentação', 'termina apresentação', 'terminar a apresentação'])) {
+               isSliderModeRef.current = false;
+               setIsSliderMode(false);
+               if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+               setCurrentText("📺 Modo Apresentação Terminado. Comandos de slides bloqueados.");
+               try { recognitionRef.current.abort(); } catch(e) {}
+               
+               // Sync with DB so Admin Panel sees it
+               conf.slider_mode_active = false;
+               const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+               supabase.from('events').update({ personality: JSON.stringify(conf) }).eq('id', eventId).then(() => {});
+               return;
+            }
+
+            // Comandos de Slide (Apenas funcionam se o Modo Slider estiver ativo)
+            if (isSliderModeRef.current) {
+               let newIndex = conf.current_slide_index || 0;
+               let changed = false;
+
+               // Comando de Página Específica (ex: "retorna página 5" ou "vai para página 12")
+               const pageMatch = transcript.match(/(?:página|slide|pagina)\s+(\d+)/i);
+               
+               if (pageMatch && pageMatch[1]) {
+                  newIndex = parseInt(pageMatch[1], 10) - 1; // 0-indexed
+                  changed = true;
+               } else if (matchCommand(transcript, vNext, ['próxima', 'proxima', 'seguinte', 'avança', 'passar', 'passa'])) {
+                  newIndex++;
+                  changed = true;
+               } else if (matchCommand(transcript, vPrev, ['anterior', 'volta', 'retrocede', 'retorna'])) {
+                  newIndex = Math.max(0, newIndex - 1);
+                  changed = true;
+               }
+
+               if (changed) {
+                  if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+                  setCurrentText(`📺 Comando de Slide Detetado! Alterando para página ${newIndex + 1}...`);
+                  
+                  // Atualiza UI instantaneamente para zero delay
+                  setSlideIndex(newIndex);
+                  if (conf.slide_decks && conf.active_speaker_id) {
+                     const speakerSlides = conf.slide_decks[conf.active_speaker_id] || [];
+                     if (speakerSlides[newIndex]) setSlideUrl(speakerSlides[newIndex]);
+                  }
+
+                  // Limpa o reconhecimento para não repetir o trigger com a mesma frase
+                  try { recognitionRef.current.abort(); } catch(e) {}
+                  
+                  // Atualiza DB silenciosamente
+                  conf.current_slide_index = newIndex;
+                  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+                  supabase.from('events').update({ personality: JSON.stringify(conf) }).eq('id', eventId).then(() => {});
+                  return; // Skip normal processing
+               }
+            }
 
           // Verifica se tem o Wake Word imediatamente para atalho (opcional)
           if (transcript.includes("digitalent") || transcript.includes("talent") || transcript.includes("olá digitalent") || transcript.includes("agente")) {
@@ -241,22 +382,26 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
              return;
           }
 
-          // Configura o novo timer de 4 segundos de silêncio
+          // Configura o novo timer de 1.5 segundos de silêncio
           silenceTimerRef.current = setTimeout(() => {
             const finalSpeech = lastTranscriptRef.current;
             if (finalSpeech.length > 3 && isContinuousRef.current && aiState !== "processing") {
                setCurrentText(`✨ Silêncio detectado. Processando: "${finalSpeech}"`);
                processAICommand(finalSpeech);
             }
-          }, 4000);
+          }, 1500);
         };
 
         recognitionRef.current.onerror = (event: any) => {
+          if (event.error === 'aborted' || event.error === 'no-speech') {
+            // Ignorar erros normais de aborto de slide ou silêncio para não matar a escuta contínua.
+            return;
+          }
           console.error("Speech recognition error", event.error);
           isContinuousRef.current = false;
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           setAiState("idle");
-          setCurrentText(`Erro do Navegador (${event.error}): O Microfone foi bloqueado. Certifique-se de usar o link com HTTPS!`);
+          setCurrentText(`Erro do Navegador (${event.error}): Verifique o microfone e se usa HTTPS.`);
         };
 
         recognitionRef.current.onend = () => {
@@ -271,6 +416,12 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
         setCurrentText("O seu navegador não suporta a gravação de voz (Tente usar o Google Chrome).");
       }
     }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
   }, [eventId, language]);
 
   const toggleListening = () => {
@@ -329,6 +480,51 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
       }, readingTime);
     }
   };
+
+  const forceAISpeak = async (text: string) => {
+    try {
+      isContinuousRef.current = false;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      recognitionRef.current?.stop();
+      lastTranscriptRef.current = ""; 
+
+      setAiState("speaking");
+      setCurrentText(text);
+
+      const res = await fetch('/api/ai/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, eventId })
+      });
+      
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.volume = volume;
+        audio.playbackRate = rate;
+        audio.preservesPitch = false;
+        
+        audio.onended = () => {
+          isContinuousRef.current = true;
+          try { recognitionRef.current?.start(); } catch (e) {}
+        };
+        
+        audio.onerror = () => fallbackToNativeTTS(text);
+        audio.play().catch(() => fallbackToNativeTTS(text));
+      } else {
+        fallbackToNativeTTS(text);
+      }
+    } catch (e) {
+      fallbackToNativeTTS(text);
+    }
+  };
+
+  useEffect(() => {
+    if (forceSpeakData) {
+       forceAISpeak(forceSpeakData.text);
+    }
+  }, [forceSpeakData]);
 
   const processAICommand = async (transcript: string) => {
     try {
@@ -401,6 +597,54 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
     return () => clearInterval(interval);
   }, [aiState]);
 
+  // Word Cloud Initialization
+  useEffect(() => {
+    if (containerRef.current && authorsData.length > 0) {
+       // Atraso pequeno para garantir que o container já tem width/height reais aplicados pelo flex
+       setTimeout(() => {
+         if (!containerRef.current) return;
+         WordCloud(containerRef.current, {
+           list: authorsData.map(a => [a.text, a.value]),
+           fontFamily: 'Impact, sans-serif',
+           weight: 'bold',
+           color: (word: string, weight: number, fontSize: number, distance: number, theta: number) => {
+             // Seta uma variavel CSS para o angulo no span
+             // A lib WordCloud.js não suporta injetar variáveis CSS diretamente pelo color, mas podemos fazê-lo num timeout
+             return colors[Math.floor(Math.random() * colors.length)];
+           },
+           rotateRatio: 0.5,
+           rotationSteps: 2,
+           backgroundColor: 'transparent',
+           shape: 'square',
+           gridSize: 8,
+           drawOutOfBound: false,
+           shrinkToFit: true,
+           hover: (item: any) => {
+             if (item && item[0]) setHighlightedName(item[0]);
+             else setHighlightedName(null);
+           }
+         });
+         
+         // Inject the custom rotation into the spans after they are rendered
+         setTimeout(() => {
+           if (containerRef.current) {
+             const spans = containerRef.current.querySelectorAll('span');
+             spans.forEach(span => {
+               const transform = span.style.transform;
+               const match = transform.match(/rotate\(([^)]+)\)/);
+               if (match) {
+                 span.style.setProperty('--rot', match[1]);
+               } else {
+                 span.style.setProperty('--rot', '0deg');
+               }
+             });
+           }
+         }, 500);
+
+       }, 200);
+    }
+  }, [authorsData]);
+
   // Atalho do teclado (Spacebar) para ligar/desligar o microfone
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -418,33 +662,43 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
     if (aiState === "speaking" || aiState === "listening") {
       const lowerText = currentText.toLowerCase();
       // Try to find if any author is mentioned in the current text
-      const found = authors.find(name => lowerText.includes(name.toLowerCase()));
-      if (found) setHighlightedName(found);
+      const found = authorsData.find(a => lowerText.includes(a.text.toLowerCase()));
+      if (found) setHighlightedName(found.text);
       else setHighlightedName(null);
     } else {
       setHighlightedName(null);
     }
-  }, [currentText, aiState, authors]);
+  }, [currentText, aiState, authorsData]);
 
-  // Word Cloud Static Configuration
-  // Gerar cores e tamanhos fixos para cada nome para não saltarem ao re-renderizar
-  const wordCloudStyles = useRef<{ [key: string]: { color: string, size: string, isVertical: boolean } }>({});
-  useEffect(() => {
-    const colors = ["text-indigo-400", "text-purple-400", "text-emerald-400", "text-pink-400", "text-cyan-400", "text-yellow-400", "text-white", "text-blue-400", "text-rose-400"];
-    const sizes = ["text-xl", "text-2xl", "text-3xl", "text-4xl", "text-lg", "text-5xl"];
-    authors.forEach(name => {
-      if (!wordCloudStyles.current[name]) {
-        wordCloudStyles.current[name] = {
-          color: colors[Math.floor(Math.random() * colors.length)],
-          size: sizes[Math.floor(Math.random() * sizes.length)],
-          isVertical: Math.random() > 0.8
-        };
-      }
-    });
-  }, [authors]);
 
   return (
     <div className="h-screen w-full bg-[#050505] text-white flex flex-col p-4 md:p-6 overflow-hidden selection:bg-purple-500/30 font-sans">
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes floatJump {
+          0% { transform: scale(1) translateY(0) rotate(var(--rot)); }
+          50% { transform: scale(1.08) translateY(-3px) rotate(var(--rot)); }
+          100% { transform: scale(1) translateY(0) rotate(var(--rot)); }
+        }
+        .animated-wordcloud span {
+          animation: floatJump 4s ease-in-out infinite;
+          transform-origin: center !important;
+          transition: all 0.3s ease;
+          cursor: pointer;
+        }
+        .animated-wordcloud span:nth-child(even) {
+          animation-delay: 1.5s;
+          animation-duration: 5s;
+        }
+        .animated-wordcloud span:nth-child(3n) {
+          animation-delay: 0.5s;
+          animation-duration: 3.5s;
+        }
+        .animated-wordcloud span:hover {
+          transform: scale(1.2) rotate(var(--rot)) !important;
+          z-index: 100 !important;
+          opacity: 1 !important;
+        }
+      `}} />
       
       {/* BOTÃO INVISÍVEL GIGANTE PARA TOUCH NO CELULAR */}
       <button 
@@ -490,50 +744,84 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
       {/* CONTEÚDO PRINCIPAL (SPLIT SCREEN: 65% Esquerda, 35% Direita) */}
       <div className="flex-1 flex flex-col lg:flex-row gap-4 overflow-hidden relative z-10 pointer-events-none">
         
-        {/* COLUNA ESQUERDA - SLIDE */}
-        <div className="flex-[2] flex items-center justify-center bg-[#0a0a0a] border border-neutral-800 rounded-2xl overflow-hidden relative shadow-2xl p-4">
-          {slideUrl ? (
-            <img src={slideUrl} alt="Slide Atual" className="w-full h-full object-contain" />
-          ) : (
-            <div className="text-neutral-600 font-medium flex flex-col items-center gap-3">
-               <div className="w-16 h-16 border-2 border-dashed border-neutral-700 rounded-xl flex items-center justify-center">
-                 <span className="text-neutral-700 font-bold text-sm">SLIDE</span>
-               </div>
-               <span className="text-sm">Aguardando Slide...</span>
+        {/* COLUNA ESQUERDA - SLIDE & APOIADORES */}
+        <div className="flex-[2] flex flex-col gap-4">
+          
+          {/* SLIDE */}
+          <div className="flex-1 flex items-center justify-center bg-[#0a0a0a] rounded-2xl overflow-hidden relative p-0 pointer-events-auto">
+            <div className="w-full aspect-video relative flex items-center justify-center rounded-xl overflow-hidden">
+              <div className="absolute top-4 left-4 bg-black/60 text-white/80 text-sm font-medium px-3 py-1 rounded-full backdrop-blur-sm z-50">
+                pagina {(slideIndex + 1).toString().padStart(2, '0')}
+              </div>
+              {slideUrl ? (
+                slideUrl.toLowerCase().includes('.pdf') ? (
+                   <iframe scrolling="no" key={slideIndex} src={`${slideUrl}#page=${slideIndex + 1}&toolbar=0&navpanes=0&scrollbar=0&statusbar=0&messages=0&view=Fit`} className="absolute inset-0 w-full h-full border-none overflow-hidden" title="PDF Slide" />
+                ) : slideUrl.toLowerCase().includes('.ppt') || slideUrl.toLowerCase().includes('.pptx') ? (
+                   <iframe scrolling="no" src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(slideUrl)}`} className="absolute inset-0 w-full h-full border-none overflow-hidden" title="PowerPoint Slide" />
+                ) : (
+                   <img src={slideUrl} alt="Slide Atual" className="absolute inset-0 w-full h-full object-contain" />
+                )
+              ) : (
+                <div className="text-neutral-600 font-medium flex flex-col items-center justify-center gap-3 w-full h-full border border-neutral-800 rounded-2xl">
+                   <div className="w-16 h-16 border-2 border-dashed border-neutral-700 rounded-xl flex items-center justify-center">
+                     <span className="text-neutral-700 font-bold text-sm">SLIDE</span>
+                   </div>
+                   <span className="text-sm">Aguardando Slide...</span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
+
+          {/* APOIADORES */}
+          <div className="h-28 shrink-0 bg-[#0a0a0a] border border-neutral-800 rounded-2xl overflow-hidden flex items-center justify-center pointer-events-auto shadow-inner relative">
+            {sponsors.length > 0 ? (
+              <div className="flex items-center gap-10 px-6 animate-marquee whitespace-nowrap min-w-full justify-around">
+                {sponsors.map((url, i) => (
+                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-10 object-contain grayscale opacity-60" />
+                ))}
+                {sponsors.map((url, i) => (
+                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-10 object-contain grayscale opacity-60" />
+                ))}
+              </div>
+            ) : (
+              <h3 className="text-white/60 text-xl lg:text-3xl font-bold tracking-widest uppercase">
+                AQUI VAI PASSAR O CARROCEL DOS APOIADORES
+              </h3>
+            )}
+          </div>
         </div>
+
+        {/* ALERTA DE TELEPROMPTER OVERLAY */}
+        {alertMessage && (
+          <div className="absolute inset-0 z-[100] bg-red-600/95 backdrop-blur-md flex flex-col items-center justify-center p-12 rounded-2xl border-4 border-red-500 animate-pulse pointer-events-auto shadow-[0_0_100px_rgba(220,38,38,0.5)]">
+             <AlertCircle className="w-24 h-24 text-white mb-6" />
+             <h2 className="text-white text-6xl md:text-7xl font-black text-center uppercase tracking-tight leading-tight">
+               {alertMessage}
+             </h2>
+             <button 
+               onClick={() => setAlertMessage(null)}
+               className="mt-12 bg-black/20 hover:bg-black/40 text-white px-6 py-3 rounded-xl font-bold transition-colors border border-white/20"
+             >
+               DISPENSAR ALERTA
+             </button>
+          </div>
+        )}
 
         {/* COLUNA DIREITA - AI & WORDCLOUD */}
         <div className="flex-1 flex flex-col gap-4 min-w-[320px]">
           
           {/* TOPO: NUVEM DE NOMES (WORD CLOUD) */}
-          <div className="flex-[2] bg-[#0a0a0a] border border-neutral-800 rounded-2xl p-6 overflow-hidden relative flex flex-wrap content-center justify-center gap-x-4 gap-y-2">
-             {authors.length === 0 ? (
-               <span className="text-neutral-600 text-sm">Nenhum participante ainda.</span>
-             ) : (
-               authors.map((name, i) => {
-                 const style = wordCloudStyles.current[name] || { color: "text-white", size: "text-xl", isVertical: false };
-                 const isHighlighted = highlightedName === name;
+          <div className="flex-[2] relative flex items-center justify-center bg-[#0a0a0a] border border-neutral-800 rounded-2xl animated-wordcloud overflow-hidden p-2" style={{ minHeight: '400px' }}>
+                 <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}></div>
                  
-                 return (
-                   <span 
-                     key={i} 
-                     className={`font-black tracking-tight leading-none transition-all duration-700 ${
-                       isHighlighted 
-                         ? "text-7xl xl:text-8xl text-white drop-shadow-[0_0_30px_rgba(255,255,255,0.8)] scale-110 z-50 absolute inset-0 m-auto flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-2xl" 
-                         : `${style.color} ${style.size} opacity-70 ${style.isVertical ? 'writing-vertical-rl rotate-180' : ''}`
-                     }`}
-                     style={{
-                        writingMode: !isHighlighted && style.isVertical ? "vertical-rl" : "horizontal-tb",
-                     }}
-                   >
-                     {name}
-                   </span>
-                 );
-               })
-             )}
-          </div>
+                 {highlightedName && (
+                   <div className="absolute inset-0 m-auto flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-2xl z-50 pointer-events-none">
+                     <span className="text-white text-6xl font-black italic drop-shadow-2xl scale-110 transition-transform">
+                       {highlightedName}
+                     </span>
+                   </div>
+                 )}
+               </div>
 
           {/* MEIO: LEGENDA / TELEPROMPTER COMPACTO */}
           <div className="h-28 shrink-0 bg-[#0a0a0a] border border-neutral-800 rounded-2xl p-4 flex items-center relative overflow-hidden">
@@ -552,12 +840,14 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
              <div className="flex flex-col justify-center">
                 <span className="text-[10px] uppercase tracking-widest text-neutral-500 font-bold mb-1">Status da IA</span>
                 <span className={`text-sm font-semibold transition-colors ${
+                  isSliderMode ? "text-green-400" :
                   aiState === "speaking" ? "text-purple-400" : 
                   aiState === "listening" ? "text-red-500" :
                   aiState === "processing" ? "text-indigo-400" :
                   "text-neutral-600"
                 }`}>
-                  {aiState === "speaking" ? "A DIGITALENT está a falar" : 
+                  {isSliderMode ? "📺 Apresentação Ativa" :
+                   aiState === "speaking" ? "A DIGITALENT está a falar" : 
                    aiState === "listening" ? "A DIGITALENT está a ouvir" : 
                    aiState === "processing" ? "A pensar..." : 
                    "Modo de Espera"}
@@ -587,21 +877,6 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
           </div>
         </div>
       </div>
-
-      {/* RODAPÉ PATROCINADORES */}
-      {sponsors.length > 0 && (
-        <div className="h-14 mt-4 shrink-0 flex items-center overflow-hidden bg-[#0a0a0a] border border-neutral-800 rounded-xl relative z-10 pointer-events-none">
-          <div className="flex items-center gap-10 px-6 animate-marquee whitespace-nowrap min-w-full justify-around">
-            {sponsors.map((url, i) => (
-              <img key={i} src={url} alt={`Sponsor ${i}`} className="h-6 object-contain grayscale opacity-40" />
-            ))}
-            {/* Clone for seamless marquee */}
-            {sponsors.map((url, i) => (
-              <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-6 object-contain grayscale opacity-40" />
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* SETTINGS MODAL */}
       {isSettingsOpen && (

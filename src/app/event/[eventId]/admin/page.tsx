@@ -21,7 +21,18 @@ export default function AdminControlPanel({ params }: { params: Promise<{ eventI
       const { data: event } = await supabase.from("events").select("*").eq("id", eventId).single();
       if (event) {
         setEventData(event);
-        setPersonality(event.personality || "");
+        
+        let loadedPersonality = event.personality || "";
+        try {
+           const parsed = JSON.parse(loadedPersonality);
+           if (parsed.custom_prompt) {
+              loadedPersonality = parsed.custom_prompt;
+           } else {
+              loadedPersonality = ""; 
+           }
+        } catch(e) {}
+        
+        setPersonality(loadedPersonality);
         setVoiceConfig(`${event.language || 'pt-BR'}_${event.voice_id || 'onyx'}`);
       }
       setIsLoading(false);
@@ -34,9 +45,23 @@ export default function AdminControlPanel({ params }: { params: Promise<{ eventI
     setIsSaving(true);
     const [language, voice_id] = voiceConfig.split('_');
     
+    const { data: currentEvent } = await supabase.from('events').select('personality').eq('id', eventId).single();
+    let currentConfig: any = {};
+    if (currentEvent?.personality) {
+      try {
+        currentConfig = JSON.parse(currentEvent.personality);
+      } catch(e) {}
+    }
+
+    const newConfig = {
+      ...currentConfig,
+      custom_prompt: personality,
+      voice_id: voice_id
+    };
+
     const { error } = await supabase
       .from('events')
-      .update({ personality, language, voice_id })
+      .update({ personality: JSON.stringify(newConfig), language, voice_id })
       .eq('id', eventId);
       
     setIsSaving(false);
@@ -99,6 +124,8 @@ export default function AdminControlPanel({ params }: { params: Promise<{ eventI
             <option value="pt-BR_onyx">🇧🇷 Português (Brasil) - Voz Masculina (Onyx)</option>
             <option value="pt-PT_shimmer">🇵🇹 Português (Portugal) - Voz Feminina (Shimmer)</option>
             <option value="pt-PT_echo">🇵🇹 Português (Portugal) - Voz Masculina (Echo)</option>
+            <option value="en-US_nova">🇺🇸 Inglês (EUA) - Voz Feminina (Nova)</option>
+            <option value="en-US_alloy">🇺🇸 Inglês (EUA) - Voz Neutra (Alloy)</option>
           </select>
         </div>
 

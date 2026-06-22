@@ -2,32 +2,55 @@
 
 import { useState, useEffect, use } from "react";
 import { createClient } from "@/utils/supabase/client";
+import QRCode from "react-qr-code";
 
 export default function JoinEventPage({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = use(params);
   const [eventData, setEventData] = useState<any>(null);
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [activeSession, setActiveSession] = useState<any>(null);
+  const [questionsCount, setQuestionsCount] = useState<Record<string, number>>({});
   
-  const [question, setQuestion] = useState("");
-  const [authorName, setAuthorName] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  // Participant state
+  const [participantName, setParticipantName] = useState("");
+  const [hasJoined, setHasJoined] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  
+
+  // Form states per speaker
+  const [inputs, setInputs] = useState<Record<string, { name: string, question: string }>>({});
+  const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
+
   const supabase = createClient();
 
+  // 1. Check LocalStorage for participant name
+  useEffect(() => {
+    const savedName = localStorage.getItem(`talent_participant_${eventId}`);
+    if (savedName) {
+      setParticipantName(savedName);
+      setHasJoined(true);
+    }
+  }, [eventId]);
+
+  // 2. Fetch Initial Data & Setup Realtime
   useEffect(() => {
     const fetchEventData = async () => {
-      // 1. Fetch Event
+      // Fetch Event
       const { data: ev } = await supabase.from("events").select("*").eq("id", eventId).single();
       if (ev) setEventData(ev);
 
-      // 2. Fetch Speakers
-      const { data: spks } = await supabase.from("speakers").select("*").eq("event_id", eventId);
-      if (spks) setSpeakers(spks);
+      // Fetch Sessions for the event
+      const { data: allSessions } = await supabase.from("sessions").select("id, speaker_id").eq("event_id", eventId);
+      
+      if (allSessions && allSessions.length > 0) {
+         // Fetch Speakers
+         const speakerIds = allSessions.map((s: any) => s.speaker_id).filter(Boolean);
+         if (speakerIds.length > 0) {
+            const { data: spks } = await supabase.from("speakers").select("*").in("id", speakerIds);
+            if (spks) setSpeakers(spks);
+         }
+      }
 
-      // 3. Fetch Active Session
+      // Fetch Active Session
       const { data: session } = await supabase
         .from("sessions")
         .select("*")
@@ -35,178 +58,246 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
-        
-      if (session) {
-        setActiveSession(session);
+      
+      if (session) setActiveSession(session);
+
+      // Fetch Initial Questions to count per session
+      const { data: allSessionsRes } = await supabase.from("sessions").select("id, speaker_id").eq("event_id", eventId);
+      
+      if (allSessionsRes && allSessionsRes.length > 0) {
+         const sessionIds = allSessionsRes.map((s: any) => s.id);
+         const { data: questions } = await supabase.from("questions").select("session_id").in("session_id", sessionIds);
+         
+         const counts: Record<string, number> = {};
+         if (questions) {
+            questions.forEach(q => {
+               const s = allSessionsRes.find((sess: any) => sess.id === q.session_id);
+               if (s && s.speaker_id) {
+                  counts[s.speaker_id] = (counts[s.speaker_id] || 0) + 1;
+               }
+            });
+         }
+         setQuestionsCount(counts);
       }
+
       setIsLoading(false);
     };
 
     fetchEventData();
-    
-    // Realtime changes for sessions (e.g. if the admin switches the active speaker)
-    const channel = supabase.channel('public:sessions')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `event_id=eq.${eventId}` }, (payload) => {
-        fetchEventData(); // refetch to get the latest active session
+
+    // Subscribe to Sessions (to toggle Red/Green instantly)
+    const sessionChannel = supabase.channel('public:sessions')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `event_id=eq.${eventId}` }, () => {
+        fetchEventData(); 
       }).subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // Subscribe to Questions (to update footer counts instantly)
+    const questionsChannel = supabase.channel('public:questions')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'questions' }, () => {
+        // Simple re-fetch of counts
+        fetchEventData();
+      }).subscribe();
+
+    return () => { 
+      supabase.removeChannel(sessionChannel);
+      supabase.removeChannel(questionsChannel);
+    };
   }, [eventId, supabase]);
 
-  const handleSubmit = async (e: React.FormEvent, sessionId: string) => {
+  const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!question.trim() || !sessionId) return;
+    if (participantName.trim()) {
+      localStorage.setItem(`talent_participant_${eventId}`, participantName.trim());
+      setHasJoined(true);
+    }
+  };
 
-    setIsSubmitting(true);
+  const handleInputChange = (speakerId: string, field: 'name' | 'question', value: string) => {
+    setInputs(prev => ({
+      ...prev,
+      [speakerId]: {
+        ...prev[speakerId],
+        name: field === 'name' ? value : (prev[speakerId]?.name ?? participantName),
+        question: field === 'question' ? value : (prev[speakerId]?.question ?? "")
+      }
+    }));
+  };
 
-    const { error } = await supabase.from("questions").insert([
-      {
-        session_id: sessionId,
-        event_id: eventId,
-        content: question,
-        author_name: authorName.trim() || "Anônimo",
-        status: "pending",
-      },
-    ]);
+  const handleSubmitQuestion = async (e: React.FormEvent, speakerId: string) => {
+    e.preventDefault();
+    
+    // We can only submit if this speaker is the active session
+    if (!activeSession || activeSession.speaker_id !== speakerId) return;
 
-    setIsSubmitting(false);
+    const data = inputs[speakerId] || { name: participantName, question: "" };
+    const finalName = data.name.trim() || participantName || "Anônimo";
+    const finalQuestion = data.question.trim();
+
+    if (!finalQuestion) return;
+
+    setSubmitting(prev => ({ ...prev, [speakerId]: true }));
+
+    const { error } = await supabase.from("questions").insert([{
+      session_id: activeSession.id,
+      content: finalQuestion,
+      author_name: finalName,
+      status: "pending",
+    }]);
+
+    setSubmitting(prev => ({ ...prev, [speakerId]: false }));
 
     if (error) {
-      alert("Erro ao enviar pergunta. Tente novamente.");
+      alert("Erro ao enviar pergunta.");
       console.error(error);
     } else {
-      setIsSuccess(true);
-      setQuestion("");
-      setTimeout(() => setIsSuccess(false), 3000);
+      // Clear question, keep name
+      handleInputChange(speakerId, 'question', '');
+      alert("Pergunta enviada com sucesso!");
     }
   };
 
   if (isLoading) {
-    return <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-white">Carregando evento...</div>;
+    return <div className="min-h-screen bg-slate-100 flex items-center justify-center text-slate-500">Carregando portal...</div>;
   }
 
+  // --- WELCOME GATE ---
+  if (!hasJoined) {
+    return (
+      <div className="min-h-screen bg-[#0A192F] flex flex-col items-center justify-center p-4">
+        <div className="bg-white max-w-md w-full rounded-2xl shadow-2xl p-8 text-center border-t-4 border-emerald-500">
+          <h1 className="text-2xl font-bold text-slate-800 mb-2">Bem-vindo(a)!</h1>
+          <p className="text-sm text-slate-500 mb-8">
+            Para participar e enviar perguntas aos oradores, por favor identifique-se.
+          </p>
+          <form onSubmit={handleJoin} className="space-y-4 text-left">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">Como devemos chamá-lo(a)?</label>
+              <input 
+                type="text" 
+                required
+                placeholder="Ex: João Silva"
+                className="w-full border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                value={participantName}
+                onChange={e => setParticipantName(e.target.value)}
+              />
+            </div>
+            <button type="submit" className="w-full bg-[#0A192F] text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition-colors shadow-lg">
+              Entrar no Evento
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAIN LAYOUT ---
+  const activeSpeaker = speakers.find(s => s.id === activeSession?.speaker_id);
+
   return (
-    <div className="min-h-screen bg-neutral-950 flex flex-col p-4 md:p-8 text-white font-sans">
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
       
-      <div className="max-w-2xl mx-auto w-full mb-8 text-center pt-8">
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent mb-2">
-          {eventData?.title || "Talent Live"}
-        </h1>
-        <p className="text-neutral-400 text-sm">
-          Acompanhe os palestrantes e envie suas perguntas ao vivo!
-        </p>
+      {/* HEADER DINÂMICO */}
+      <div className="bg-[#0A192F] text-white border-b-4 border-[#081324] shadow-md px-4 md:px-8 py-6 pb-8">
+         <div className="max-w-5xl mx-auto flex justify-between items-start gap-4">
+            <div className="flex-1">
+               <h1 className="text-2xl md:text-3xl font-bold mb-2">
+                 Perguntas abertas para {activeSpeaker?.name || "..."}
+               </h1>
+               <p className="text-sm text-slate-400">
+                 Tema: {activeSpeaker?.role || "Geral"}. Envie sua pergunta pelo celular enquanto a sessao estiver verde.
+               </p>
+            </div>
+            {/* MINI QR CODE */}
+            <div className="bg-white p-2 rounded-xl flex flex-col items-center shadow-lg shrink-0 w-[90px] md:w-[110px]">
+               {typeof window !== 'undefined' && <QRCode value={window.location.href} size={256} className="w-full h-auto" />}
+               <span className="text-[7px] md:text-[9px] text-slate-500 mt-1 break-all text-center leading-tight">
+                 {typeof window !== 'undefined' ? window.location.origin : ''}
+               </span>
+            </div>
+         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto w-full space-y-6">
-        {speakers.length === 0 ? (
-          <div className="text-center p-8 bg-neutral-900 rounded-2xl border border-neutral-800">
-            <p className="text-neutral-500">Nenhum palestrante cadastrado ainda.</p>
-          </div>
-        ) : (
-          speakers.map((speaker) => {
-            const isActive = activeSession && activeSession.speaker_id === speaker.id;
-            
-            return (
-              <div 
-                key={speaker.id} 
-                className={`transition-all duration-500 overflow-hidden rounded-2xl border ${
-                  isActive 
-                    ? "bg-neutral-900 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.15)] ring-1 ring-emerald-500/50" 
-                    : "bg-neutral-900/50 border-neutral-800 opacity-70 scale-[0.98]"
-                }`}
-              >
-                {/* Speaker Header */}
-                <div className={`p-6 flex items-start gap-4 ${isActive ? 'bg-emerald-500/5' : ''}`}>
-                  <div className={`w-14 h-14 rounded-full flex items-center justify-center text-xl font-bold shrink-0 shadow-lg ${
-                    isActive ? "bg-gradient-to-br from-emerald-400 to-teal-500 text-white" : "bg-neutral-800 text-neutral-500"
-                  }`}>
-                    {speaker.name.charAt(0)}
+      {/* GRID DE CARDS DOS ORADORES */}
+      <div className="max-w-5xl mx-auto w-full p-4 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+        {speakers.map(speaker => {
+          const isActive = activeSession?.speaker_id === speaker.id;
+          const currentInput = inputs[speaker.id] || { name: participantName, question: "" };
+          const qCount = questionsCount[speaker.id] || 0;
+          
+          return (
+            <div key={speaker.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col transition-all">
+              
+              <div className="p-5 flex flex-col gap-4">
+                {/* TOPO: Nome e Badge */}
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-800 leading-tight">{speaker.name}</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">{speaker.role}</p>
                   </div>
-                  
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start">
-                      <h2 className={`text-xl font-bold ${isActive ? "text-emerald-400" : "text-neutral-300"}`}>
-                        {speaker.name}
-                      </h2>
-                      {isActive && (
-                        <span className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-full animate-pulse">
-                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
-                          No Palco
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs uppercase tracking-wider text-neutral-500 mt-1 block">{speaker.role}</span>
-                    <p className={`mt-3 text-sm line-clamp-3 ${isActive ? "text-neutral-300" : "text-neutral-500"}`}>
-                      {speaker.bio}
-                    </p>
+                  <div className={`px-3 py-1 rounded-full text-xs font-bold shrink-0 ${
+                    isActive ? "bg-emerald-100 text-emerald-700" : "bg-red-50 text-red-600"
+                  }`}>
+                    {isActive ? "Aberto" : "Fechado"}
                   </div>
                 </div>
 
-                {/* Form Section (Only shown if active) */}
-                {isActive && (
-                  <div className="p-6 border-t border-emerald-500/20 bg-neutral-950/50">
-                    <h3 className="text-lg font-semibold mb-4 text-white flex items-center gap-2">
-                      Fazer uma Pergunta
-                    </h3>
+                {/* AVISO COLORIDO */}
+                <div className={`px-4 py-2.5 rounded-lg text-sm font-semibold ${
+                  isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"
+                }`}>
+                  {isActive ? "Sessao verde: escreva sua pergunta." : "Sessao vermelha: aguarde este orador abrir."}
+                </div>
 
-                    {isSuccess ? (
-                      <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-6 rounded-xl text-center animate-in zoom-in duration-300">
-                        <svg className="w-10 h-10 mx-auto mb-2 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <h4 className="font-semibold">Sua voz foi ouvida!</h4>
-                        <p className="text-sm opacity-80 mt-1">A IA já enviou sua pergunta para o diretor.</p>
-                      </div>
-                    ) : (
-                      <form onSubmit={(e) => handleSubmit(e, activeSession.id)} className="space-y-4">
-                        <div>
-                          <input
-                            type="text"
-                            placeholder="Seu nome (opcional)"
-                            className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-4 py-3 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 transition-colors"
-                            value={authorName}
-                            onChange={(e) => setAuthorName(e.target.value)}
-                            maxLength={50}
-                          />
-                        </div>
-
-                        <div>
-                          <textarea
-                            required
-                            placeholder={`Escreva sua pergunta para ${speaker.name.split(' ')[0]}...`}
-                            className="w-full bg-neutral-900 border border-neutral-700 rounded-xl px-4 py-3 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 transition-colors resize-none h-28"
-                            value={question}
-                            onChange={(e) => setQuestion(e.target.value)}
-                            maxLength={500}
-                          />
-                        </div>
-
-                        <button
-                          type="submit"
-                          disabled={isSubmitting || !question.trim()}
-                          className="w-full bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold py-3.5 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
-                        >
-                          {isSubmitting ? (
-                            <>
-                              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                              </svg>
-                              Enviando para a IA...
-                            </>
-                          ) : (
-                            "Enviar Pergunta"
-                          )}
-                        </button>
-                      </form>
-                    )}
+                {/* FORMULÁRIO */}
+                <form onSubmit={(e) => handleSubmitQuestion(e, speaker.id)} className="space-y-4 mt-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Seu nome</label>
+                    <input 
+                      type="text" 
+                      placeholder="Opcional"
+                      disabled={!isActive}
+                      value={currentInput.name}
+                      onChange={(e) => handleInputChange(speaker.id, 'name', e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 transition-colors"
+                    />
                   </div>
-                )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Pergunta</label>
+                    <textarea 
+                      required
+                      placeholder={`Digite sua pergunta para ${speaker.name.split(' ')[0]}`}
+                      disabled={!isActive}
+                      value={currentInput.question}
+                      onChange={(e) => handleInputChange(speaker.id, 'question', e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 transition-colors resize-none h-24"
+                    />
+                  </div>
+
+                  {/* BOTÃO */}
+                  <button 
+                    type="submit" 
+                    disabled={!isActive || submitting[speaker.id]}
+                    className={`w-full font-bold py-3.5 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                      isActive 
+                        ? "bg-[#1E824C] hover:bg-[#15673a] text-white shadow-md shadow-[#1E824C]/20" 
+                        : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                    }`}
+                  >
+                    {submitting[speaker.id] ? "Enviando..." : "Enviar pergunta"}
+                  </button>
+                </form>
               </div>
-            );
-          })
-        )}
+
+              {/* RODAPÉ: Contador */}
+              <div className="bg-slate-50 border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+                {qCount} pergunta(s) recebida(s) para este orador.
+              </div>
+            </div>
+          );
+        })}
       </div>
+
     </div>
   );
 }
