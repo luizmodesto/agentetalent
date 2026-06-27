@@ -76,3 +76,26 @@ Sempre que perder a autenticação do Github e receber o Erro 403 (Permission De
    ```bash
    npx vercel --prod --build-env NPM_CONFIG_LEGACY_PEER_DEPS=true
    ```
+
+---
+
+## Sessão: 27 de Junho de 2026
+**Funcionalidades Implementadas e Ajustes:**
+
+1. **Inteligência Artificial de Moderação Avançada de Q&A:**
+   - Criada a rota de moderação inteligente (`qa-moderation/route.ts`) que analisa perguntas recebidas.
+   - **Regras Estritas Aplicadas:** Rejeição de mensagens ofensivas/fora de tema, agrupamento de perguntas similares, e utilização natural do nome dos participantes, sem parecer robótico.
+   - A IA agora gera dinamicamente uma frase de encerramento calorosa (*closing remark*) quando a fila de perguntas chega ao fim.
+
+2. **Modo Automático vs Manual no Q&A:**
+   - Adicionado o botão central de "Alternar Modo IA" no `ManageEventModule.tsx` (Painel Live Controller).
+   - O Diretor/Administrador pode decidir, em tempo real, se as perguntas entram automaticamente (orientadas por voz) ou se são acionadas manualmente através de um clique no botão de transição.
+
+3. **Rebranding e Ajustes Visuais:**
+   - O nome do separador do navegador foi atualizado para **"Dj Gestão Eventos - Creat App"**.
+   - O esquema de cor global (Tema Vercel/PWA) foi atualizado para azul-claro (`#38bdf8`).
+   - O favicon principal foi substituído por um logotipo atualizado para combinar com a identidade visual atual.
+
+4. **Correção de Deploys da Vercel (Build Time Erros):**
+   - **Problema:** A Vercel cancelava as compilações (SSG/Pré-renderização) nas páginas e rotas de IA devido à falta de injeção das chaves `OPENAI_API_KEY` e `NEXT_PUBLIC_SUPABASE_URL` no momento do "build".
+   - **Solução (Histórico para o futuro):** O uso de variáveis de ambiente estritas com o `!` no TypeScript (`process.env.OPENAI_API_KEY!`) no escopo global de rotas Next.js bloqueava o processo. Foi substituído em todo o projeto por "fallback keys" seguras (`|| 'dummy_key'`). Isso permite que o código seja compilado com sucesso, puxando as chaves verdadeiras em tempo de execução.
