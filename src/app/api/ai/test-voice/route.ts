@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
 export const runtime = 'edge';
@@ -8,30 +8,30 @@ export async function POST(request: Request) {
     const { provider, apiKey, voiceId, text, speed, pitch, tone, rhythm, storytelling, language } = await request.json();
 
     if (!text || !provider || !apiKey) {
-      return NextResponse.json({ error: 'Faltam parâmetros obrigatórios.' }, { status: 400 });
+      return NextResponse.json({ error: 'Faltam parÃ¢metros obrigatÃ³rios.' }, { status: 400 });
     }
 
     let finalSynthesizeText = text;
 
     if (tone) {
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
-      let systemPrompt = `Gere uma única frase curta (máximo 15 palavras) para testar um sistema de som em um evento. A frase deve indicar que o sistema está a ser testado e que o palco está pronto. O evento chama-se Digitalent'26. Adapte estritamente o tom da frase baseado nos parâmetros abaixo:\n`;
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'dummy_key' });
+      let systemPrompt = `Gere uma Ãºnica frase curta (mÃ¡ximo 15 palavras) para testar um sistema de som em um evento. A frase deve indicar que o sistema estÃ¡ a ser testado e que o palco estÃ¡ pronto. O evento chama-se Digitalent'26. Adapte estritamente o tom da frase baseado nos parÃ¢metros abaixo:\n`;
       if (tone) systemPrompt += `- Tom: ${tone}\n`;
       if (rhythm) systemPrompt += `- Ritmo: ${rhythm}\n`;
-      if (storytelling) systemPrompt += `- Nível de Storytelling: ${storytelling}/10\n`;
+      if (storytelling) systemPrompt += `- NÃ­vel de Storytelling: ${storytelling}/10\n`;
       
       if (language === 'en-US') {
            systemPrompt += `- Idioma: strictly American English (en-US).\n`;
       } else if (language === 'pt-BR') {
-           systemPrompt += `- Idioma: Português do Brasil.\n`;
+           systemPrompt += `- Idioma: PortuguÃªs do Brasil.\n`;
       } else {
-           systemPrompt += `- Idioma: estritamente Português de Portugal (PT-PT). Proibido usar gerúndios.\n`;
+           systemPrompt += `- Idioma: estritamente PortuguÃªs de Portugal (PT-PT). Proibido usar gerÃºndios.\n`;
       }
 
       try {
           const response = await openai.chat.completions.create({
               model: "gpt-4o",
-              messages: [{ role: "system", content: systemPrompt }, { role: "user", content: "Gere a frase de teste de áudio agora."}],
+              messages: [{ role: "system", content: systemPrompt }, { role: "user", content: "Gere a frase de teste de Ã¡udio agora."}],
               temperature: 0.7,
               max_tokens: 50
           });
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
               finalSynthesizeText = response.choices[0].message.content.trim();
           }
       } catch (e) {
-          console.error("Erro ao gerar frase dinâmica GPT-4o para teste", e);
+          console.error("Erro ao gerar frase dinÃ¢mica GPT-4o para teste", e);
       }
     }
 
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
     } else if (provider === "openai") {
       const openAiKey = process.env.OPENAI_API_KEY;
       if (!openAiKey) {
-        return NextResponse.json({ error: "Chave OpenAI não configurada no servidor." }, { status: 500 });
+        return NextResponse.json({ error: "Chave OpenAI nÃ£o configurada no servidor." }, { status: 500 });
       }
 
       const oaResponse = await fetch(`https://api.openai.com/v1/audio/speech`, {
@@ -122,7 +122,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ error: 'Provedor inválido.' }, { status: 400 });
+    return NextResponse.json({ error: 'Provedor invÃ¡lido.' }, { status: 400 });
 
   } catch (error: any) {
     console.error("Erro no proxy TTS:", error);

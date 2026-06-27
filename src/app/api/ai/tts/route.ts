@@ -1,13 +1,13 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co');
+const supabaseKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder');
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
+  apiKey: process.env.OPENAI_API_KEY || 'dummy_key',
 });
 
 export async function POST(request: Request) {
@@ -15,17 +15,17 @@ export async function POST(request: Request) {
     const { text, eventId, voice_id, speed } = await request.json();
 
     if (!text) {
-      return NextResponse.json({ error: 'Texto é obrigatório.' }, { status: 400 });
+      return NextResponse.json({ error: 'Texto Ã© obrigatÃ³rio.' }, { status: 400 });
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: 'OpenAI API Key não configurada.' }, { status: 500 });
+      return NextResponse.json({ error: 'OpenAI API Key nÃ£o configurada.' }, { status: 500 });
     }
 
     let finalVoice = voice_id || "onyx";
     let finalSpeed = speed ? parseFloat(speed) : 1.0;
 
-    // Busca a configuração global de voz do banco de dados para evitar fallbacks
+    // Busca a configuraÃ§Ã£o global de voz do banco de dados para evitar fallbacks
     if (eventId) {
        const { data } = await supabase.from('events').select('voice_settings, personality').eq('id', eventId).single();
        if (data) {
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
           else {
              // Fallback para OpenAI (ou se provider for 'openai')
              const openAiKey = process.env.OPENAI_API_KEY;
-             if (!openAiKey) return NextResponse.json({ error: 'OpenAI API Key não configurada.' }, { status: 500 });
+             if (!openAiKey) return NextResponse.json({ error: 'OpenAI API Key nÃ£o configurada.' }, { status: 500 });
              
              const mp3 = await openai.audio.speech.create({
                 model: "tts-1",
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
        }
     }
 
-    // Fallback absoluto se não houver eventId
+    // Fallback absoluto se nÃ£o houver eventId
     const mp3 = await openai.audio.speech.create({
       model: "tts-1",
       voice: "onyx",

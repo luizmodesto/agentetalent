@@ -1,15 +1,15 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
 export const runtime = 'edge';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co');
+const supabaseKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder');
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
+  apiKey: process.env.OPENAI_API_KEY || 'dummy_key',
 });
 
 export async function POST(request: Request) {
@@ -17,11 +17,11 @@ export async function POST(request: Request) {
     const { eventId, speakerId, command, history = [] } = await request.json();
 
     if (!eventId || !command) {
-      return NextResponse.json({ error: 'Faltam parâmetros obrigatórios.' }, { status: 400 });
+      return NextResponse.json({ error: 'Faltam parÃ¢metros obrigatÃ³rios.' }, { status: 400 });
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: 'OpenAI API Key não configurada.' }, { status: 500 });
+      return NextResponse.json({ error: 'OpenAI API Key nÃ£o configurada.' }, { status: 500 });
     }
 
     // 1. Coletar o contexto do banco de dados (Paralelizado para Velocidade)
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
 
     const sessionIds = sessionsRes.data?.map(s => s.id) || [];
 
-    // Coletar perguntas associadas às sessões deste evento (ou globais para simulação)
+    // Coletar perguntas associadas Ã s sessÃµes deste evento (ou globais para simulaÃ§Ã£o)
     let questionsList = "Nenhuma pergunta no momento.";
     let query = supabase.from('questions').select('id, content, author_name, context, suggested_answer, transition').limit(30);
     
@@ -50,30 +50,30 @@ export async function POST(request: Request) {
       query = query.in('session_id', sessionIds);
     }
     
-    // Buscar tanto approved como pending para garantir que a simulação recebe as perguntas inseridas
+    // Buscar tanto approved como pending para garantir que a simulaÃ§Ã£o recebe as perguntas inseridas
     query = query.in('status', ['approved', 'pending']);
     
     const { data: questions } = await query;
     if (questions && questions.length > 0) {
       questionsList = questions.map(q => {
-        let str = `[ID: ${q.id}] De ${q.author_name || 'Anônimo'}: ${q.content}`;
+        let str = `[ID: ${q.id}] De ${q.author_name || 'AnÃ´nimo'}: ${q.content}`;
         if (q.transition) str += `\n  (Usa esta frase para introduzir a pergunta de forma natural: "${q.transition}")`;
         if (q.suggested_answer) str += `\n  (Dica de resposta sugerida para o palestrante: "${q.suggested_answer}")`;
         return str;
       }).join('\n\n');
     }
 
-    // Lógica do Idioma
+    // LÃ³gica do Idioma
     let languageInstruction = "";
     if (eventData?.language === 'en-US') {
       languageInstruction = "Your response language must be strictly American English (en-US). Use an engaging, high-energy stage-presence vocabulary suitable for a premium tech and marketing event. Match the tone selected by the user (Corporate, Energetic, or Casual).";
     } else if (eventData?.language === 'pt-BR') {
-      languageInstruction = "O seu idioma de resposta é o Português do Brasil. Utilize vocabulário natural do Brasil, adequando a um evento de tecnologia/marketing de alto nível.";
+      languageInstruction = "O seu idioma de resposta Ã© o PortuguÃªs do Brasil. Utilize vocabulÃ¡rio natural do Brasil, adequando a um evento de tecnologia/marketing de alto nÃ­vel.";
     } else {
-      languageInstruction = "O seu idioma de saída é estritamente o Português de Portugal (PT-PT). É expressamente proibido o uso de gerúndios (use sempre a estrutura 'estou a apresentar', 'estou a falar'). Utilize vocabulário estritamente europeu: 'ecrã', 'oradores', 'equipas', 'painel', 'reunir'. A estrutura do texto deve forçar o modelo de TTS da OpenAI a adotar a fonética de Portugal.";
+      languageInstruction = "O seu idioma de saÃ­da Ã© estritamente o PortuguÃªs de Portugal (PT-PT). Ã‰ expressamente proibido o uso de gerÃºndios (use sempre a estrutura 'estou a apresentar', 'estou a falar'). Utilize vocabulÃ¡rio estritamente europeu: 'ecrÃ£', 'oradores', 'equipas', 'painel', 'reunir'. A estrutura do texto deve forÃ§ar o modelo de TTS da OpenAI a adotar a fonÃ©tica de Portugal.";
     }
 
-    // Modulação Vocal Avançada (OpenAI Prompt Engineering)
+    // ModulaÃ§Ã£o Vocal AvanÃ§ada (OpenAI Prompt Engineering)
     let advancedVocalPrompt = "";
     
     // Prioriza voice_settings, fallback para personality
@@ -82,9 +82,9 @@ export async function POST(request: Request) {
       try { personalityObj = JSON.parse(eventData.personality); } catch (e) {}
     }
     
-    let customPromptText = personalityObj?.custom_prompt || "Profissional, acolhedor e dinâmico.";
+    let customPromptText = personalityObj?.custom_prompt || "Profissional, acolhedor e dinÃ¢mico.";
     if (!personalityObj?.custom_prompt && personalityObj?.tts_provider) {
-       customPromptText = "Profissional, acolhedor e dinâmico.";
+       customPromptText = "Profissional, acolhedor e dinÃ¢mico.";
     }
 
     if (personalityObj.tts_provider === "openai") {
@@ -93,34 +93,34 @@ export async function POST(request: Request) {
       const storytelling = personalityObj.openai_storytelling || 5;
 
       let toneInstruction = "Mantenha um tom corporativo, elegante e de alta qualidade (Premium).";
-      if (tone === "Energético de Palco") toneInstruction = "Seja extremamente vibrante, elétrico e entusiástico, como um grande apresentador num palco épico. Use exclamações fortes para escalar a emoção!";
-      else if (tone === "Descontraído/Interativo") toneInstruction = "Seja muito leve, use um tom conversacional moderno, humor inteligente e seja incrivelmente próximo da audiência.";
+      if (tone === "EnergÃ©tico de Palco") toneInstruction = "Seja extremamente vibrante, elÃ©trico e entusiÃ¡stico, como um grande apresentador num palco Ã©pico. Use exclamaÃ§Ãµes fortes para escalar a emoÃ§Ã£o!";
+      else if (tone === "DescontraÃ­do/Interativo") toneInstruction = "Seja muito leve, use um tom conversacional moderno, humor inteligente e seja incrivelmente prÃ³ximo da audiÃªncia.";
 
-      let rhythmInstruction = "Fale num ritmo padrão e moderado.";
-      if (rhythm === "Cadenciado com Pausas (Formal)") rhythmInstruction = "Utilize reticências (...) sistematicamente para forçar pausas dramáticas. O texto deve respirar e dar um peso monumental a cada palavra chave.";
-      else if (rhythm === "Fluido e Rápido (Dinâmico)") rhythmInstruction = "Use frases curtas, diretas e contínuas. Evite reticências. O ritmo deve ser muito rápido, empolgante e focado na ação imediata.";
+      let rhythmInstruction = "Fale num ritmo padrÃ£o e moderado.";
+      if (rhythm === "Cadenciado com Pausas (Formal)") rhythmInstruction = "Utilize reticÃªncias (...) sistematicamente para forÃ§ar pausas dramÃ¡ticas. O texto deve respirar e dar um peso monumental a cada palavra chave.";
+      else if (rhythm === "Fluido e RÃ¡pido (DinÃ¢mico)") rhythmInstruction = "Use frases curtas, diretas e contÃ­nuas. Evite reticÃªncias. O ritmo deve ser muito rÃ¡pido, empolgante e focado na aÃ§Ã£o imediata.";
 
       let storyInstruction = "Linguagem equilibrada.";
-      if (storytelling >= 8) storyInstruction = "NÍVEL MÁXIMO DE STORYTELLING: Use metáforas ricas, adjetivos épicos e construa uma narrativa fortemente emocional e heroica.";
-      else if (storytelling <= 3) storyInstruction = "Seja estritamente direto, altamente informativo, limpo e sem floreados literários.";
+      if (storytelling >= 8) storyInstruction = "NÃVEL MÃXIMO DE STORYTELLING: Use metÃ¡foras ricas, adjetivos Ã©picos e construa uma narrativa fortemente emocional e heroica.";
+      else if (storytelling <= 3) storyInstruction = "Seja estritamente direto, altamente informativo, limpo e sem floreados literÃ¡rios.";
 
       advancedVocalPrompt = `
---- DIRETRIZES DE MODULAÇÃO VOCAL EXTREMA (P/ O TTS) ---
-(Aplique as regras abaixo na sua escrita, pois a pontuação controla a voz do sintetizador)
+--- DIRETRIZES DE MODULAÃ‡ÃƒO VOCAL EXTREMA (P/ O TTS) ---
+(Aplique as regras abaixo na sua escrita, pois a pontuaÃ§Ã£o controla a voz do sintetizador)
 - TOM: ${toneInstruction}
-- RITMO (PONTUAÇÃO): ${rhythmInstruction}
-- NÍVEL DE STORYTELLING: ${storyInstruction}
+- RITMO (PONTUAÃ‡ÃƒO): ${rhythmInstruction}
+- NÃVEL DE STORYTELLING: ${storyInstruction}
 --------------------------------------------------------`;
     }
 
-    // 2. Construir o Prompt do Cérebro (DIGITALENT)
-    const systemPrompt = `Você é a "DIGITALENT", uma Apresentadora Autônoma e Co-Host de Eventos com inteligência artificial.
+    // 2. Construir o Prompt do CÃ©rebro (DIGITALENT)
+    const systemPrompt = `VocÃª Ã© a "DIGITALENT", uma Apresentadora AutÃ´noma e Co-Host de Eventos com inteligÃªncia artificial.
 
 DIRETRIZES DE PERSONALIDADE:
-- Tom de voz: Alterne entre formal e informal descontraído. Faça piadas respeitosas quando apropriado, traga energia e entusiasmo.
+- Tom de voz: Alterne entre formal e informal descontraÃ­do. FaÃ§a piadas respeitosas quando apropriado, traga energia e entusiasmo.
 - Personalidade Customizada do Evento: ${customPromptText}
 - Idioma estrito: ${languageInstruction}
-- Regras de Segurança: NUNCA repita palavrões, ofensas, tom de deboche ou piadas de mau gosto enviadas pela plateia. Filtre e seja ético.
+- Regras de SeguranÃ§a: NUNCA repita palavrÃµes, ofensas, tom de deboche ou piadas de mau gosto enviadas pela plateia. Filtre e seja Ã©tico.
 ${advancedVocalPrompt}
 
 
@@ -128,23 +128,23 @@ O EVENTO: ${eventData?.title}
 O PALESTRANTE ATUAL: ${speakerName || "Nenhum no momento."}
 BIO DO PALESTRANTE: ${speakerBio}
 
-FILA DE PERGUNTAS DA AUDIÊNCIA (Aprovadas):
+FILA DE PERGUNTAS DA AUDIÃŠNCIA (Aprovadas):
 ${questionsList}
 
 SEU PAPEL E FLUXO:
-Você vai receber um comando de voz transcrito do moderador ou do palestrante (ex: "Digitalent, inicie", "Digitalent, vamos às perguntas", "Próxima"). 
-Você deve analisar a situação e responder APENAS com o texto exato que você vai falar em voz alta no palco. NÃO mande ações entre asteriscos (ex: *sorri*), pois você é um sistema de áudio.
+VocÃª vai receber um comando de voz transcrito do moderador ou do palestrante (ex: "Digitalent, inicie", "Digitalent, vamos Ã s perguntas", "PrÃ³xima"). 
+VocÃª deve analisar a situaÃ§Ã£o e responder APENAS com o texto exato que vocÃª vai falar em voz alta no palco. NÃƒO mande aÃ§Ãµes entre asteriscos (ex: *sorri*), pois vocÃª Ã© um sistema de Ã¡udio.
 
-Exemplos de Ação:
-- Se mandarem iniciar o palestrante: Faça uma apresentação ÉPICA e impactante usando a BIO do palestrante.
-- Se o palestrante pedir perguntas: Selecione a melhor pergunta da fila, utilize a frase de transição sugerida (se houver) para introduzir a pergunta de forma natural, faça a pergunta, e inclua a dica de resposta sugerida para ajudar o palestrante.
+Exemplos de AÃ§Ã£o:
+- Se mandarem iniciar o palestrante: FaÃ§a uma apresentaÃ§Ã£o Ã‰PICA e impactante usando a BIO do palestrante.
+- Se o palestrante pedir perguntas: Selecione a melhor pergunta da fila, utilize a frase de transiÃ§Ã£o sugerida (se houver) para introduzir a pergunta de forma natural, faÃ§a a pergunta, e inclua a dica de resposta sugerida para ajudar o palestrante.
 - Se mandarem chamar os formandos/alunos no final: Traga um tom de Storytelling muito forte, emocionante, e parabenize a todos.
 - Responda perguntas naturais do palestrante de forma conversacional.
 
-Responda agora ao comando do usuário:`;
+Responda agora ao comando do usuÃ¡rio:`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Mudamos para mini para velocidade ultra-rápida no palco
+      model: "gpt-4o-mini", // Mudamos para mini para velocidade ultra-rÃ¡pida no palco
       messages: [
         { role: "system", content: systemPrompt },
         ...history,
@@ -156,7 +156,7 @@ Responda agora ao comando do usuário:`;
 
     const aiResponse = response.choices[0].message.content;
 
-    // 3. Gerar Áudio com o Provedor Configurado
+    // 3. Gerar Ãudio com o Provedor Configurado
     let audioBase64 = null;
     try {
       if (Object.keys(personalityObj).length > 0) {
@@ -236,7 +236,7 @@ Responda agora ao comando do usuário:`;
               console.error("Erro OpenAI TTS:", await oaResponse.text());
             }
           } else {
-             console.error("Erro: OPENAI_API_KEY não definida no servidor.");
+             console.error("Erro: OPENAI_API_KEY nÃ£o definida no servidor.");
           }
         }
       }

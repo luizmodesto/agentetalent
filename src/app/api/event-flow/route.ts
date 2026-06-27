@@ -1,13 +1,13 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co');
+const supabaseKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder');
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
+  apiKey: process.env.OPENAI_API_KEY || 'dummy_key',
 });
 
 export async function POST(request: Request) {
@@ -115,7 +115,7 @@ Generate real-time guidance for the speaker:
         },
         {
           role: 'user',
-          content: `Aqui está o contexto e as perguntas cruas (raw) da plateia para você processar:\n\n${eventContext}\n\nPERGUNTAS:\n${inputQuestions}`
+          content: `Aqui estÃ¡ o contexto e as perguntas cruas (raw) da plateia para vocÃª processar:\n\n${eventContext}\n\nPERGUNTAS:\n${inputQuestions}`
         }
       ],
       response_format: {
@@ -174,9 +174,9 @@ Generate real-time guidance for the speaker:
 
     const aiResult = JSON.parse(response.choices[0].message.content!);
 
-    // Note: Em produção, após este resultado, você salvaria as "approved" na tabela, 
+    // Note: Em produÃ§Ã£o, apÃ³s este resultado, vocÃª salvaria as "approved" na tabela, 
     // deletaria ou marcaria as "rejected_ids" como rejeitadas,
-    // e atualizaria a sessão com o "event_flow".
+    // e atualizaria a sessÃ£o com o "event_flow".
 
     return NextResponse.json(aiResult);
 

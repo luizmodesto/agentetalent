@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
+  apiKey: process.env.OPENAI_API_KEY || 'dummy_key',
 });
 
 async function fetchMetaDescription(url: string) {
@@ -36,11 +36,11 @@ export async function POST(request: Request) {
     const { name, role, linkedin_url, instagram_url, facebook_url } = await request.json();
 
     if (!name) {
-      return NextResponse.json({ error: 'Nome é obrigatório' }, { status: 400 });
+      return NextResponse.json({ error: 'Nome Ã© obrigatÃ³rio' }, { status: 400 });
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json({ error: 'OpenAI API Key não configurada' }, { status: 500 });
+      return NextResponse.json({ error: 'OpenAI API Key nÃ£o configurada' }, { status: 500 });
     }
 
     const scrapedData: string[] = [];
@@ -59,8 +59,8 @@ export async function POST(request: Request) {
     }
 
     const scrapedContext = scrapedData.length > 0 
-      ? `Informações extraídas das redes sociais:\n${scrapedData.join('\n')}` 
-      : 'Não foi possível extrair dados automáticos das redes. Use a criatividade baseada no nome e cargo/papel.';
+      ? `InformaÃ§Ãµes extraÃ­das das redes sociais:\n${scrapedData.join('\n')}` 
+      : 'NÃ£o foi possÃ­vel extrair dados automÃ¡ticos das redes. Use a criatividade baseada no nome e cargo/papel.';
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -69,10 +69,10 @@ export async function POST(request: Request) {
       messages: [
         {
           role: 'system',
-          content: `Você é um copywriter especialista em criar biografias de alto impacto para eventos. 
-Sua missão é escrever uma introdução curta, forte e engajadora sobre um profissional.
-O texto deve enaltecer a pessoa, mostrar autoridade e criar expectativa na audiência.
-Evite formatações complexas. Retorne apenas o texto final da biografia em português (pt-BR).`
+          content: `VocÃª Ã© um copywriter especialista em criar biografias de alto impacto para eventos. 
+Sua missÃ£o Ã© escrever uma introduÃ§Ã£o curta, forte e engajadora sobre um profissional.
+O texto deve enaltecer a pessoa, mostrar autoridade e criar expectativa na audiÃªncia.
+Evite formataÃ§Ãµes complexas. Retorne apenas o texto final da biografia em portuguÃªs (pt-BR).`
         },
         {
           role: 'user',
@@ -81,7 +81,7 @@ Papel no evento: ${role || 'Orador'}
 
 ${scrapedContext}
 
-Crie uma biografia de impacto (máximo 2 parágrafos).`
+Crie uma biografia de impacto (mÃ¡ximo 2 parÃ¡grafos).`
         }
       ],
     });

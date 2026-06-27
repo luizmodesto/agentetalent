@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect } from "react";
 import { 
@@ -34,7 +34,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
     const fetchSessionData = async () => {
       try {
         const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+        const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'), (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder'));
         
         const { data: session } = await supabase.from('sessions').select('*, speakers(name, bio)').eq('event_id', eventId).eq('status', 'live').maybeSingle();
         if (session) {
@@ -65,11 +65,11 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
     
     try {
       const { createClient } = await import('@supabase/supabase-js');
-      const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+      const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'), (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder'));
 
-      if (cmd === "Digitalent, vamos às perguntas") {
+      if (cmd === "Digitalent, vamos Ã s perguntas") {
         if (!activeSession || !speaker) {
-          addLog("ERRO: Nenhuma sessão ativa encontrada.");
+          addLog("ERRO: Nenhuma sessÃ£o ativa encontrada.");
           return;
         }
 
@@ -97,17 +97,17 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
              setClosingRemark(data.closing_remark);
            }
            // Trigger AI Introduction
-           const introText = `Muito bem. Recebi várias perguntas fantásticas do público. Vamos começar.`;
+           const introText = `Muito bem. Recebi vÃ¡rias perguntas fantÃ¡sticas do pÃºblico. Vamos comeÃ§ar.`;
            await supabase.from('events').update({
              personality: JSON.stringify({ ai_force_speak: { text: introText, time: Date.now() }, target_screen_id: 'ALL' })
            }).eq('id', eventId);
-           addLog("Teleprompter: Introdução do Q&A enviada.");
+           addLog("Teleprompter: IntroduÃ§Ã£o do Q&A enviada.");
         } else {
            addLog("ERRO no processamento de IA.");
         }
       }
 
-      if (cmd === "Próxima pergunta") {
+      if (cmd === "PrÃ³xima pergunta") {
         // Find next approved question that hasn't been read
         const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
         
@@ -130,12 +130,12 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
            // Mark as answered
            await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
         } else {
-           addLog("Aviso: Não há mais perguntas aprovadas na fila.");
+           addLog("Aviso: NÃ£o hÃ¡ mais perguntas aprovadas na fila.");
         }
       }
     } catch(e) {
       setIsProcessing(false);
-      addLog("ERRO de execução de comando.");
+      addLog("ERRO de execuÃ§Ã£o de comando.");
     }
   };
 
@@ -168,7 +168,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
             <Mic className="w-4 h-4" /> Gatilhos de Comando (Teleprompter)
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button disabled={isProcessing} onClick={() => handleCommand("Digitalent, vamos às perguntas")} className="group bg-gradient-to-br from-[#1a1a1a] to-[#111] border border-neutral-800 hover:border-indigo-500/50 p-5 rounded-xl text-left transition-all relative overflow-hidden disabled:opacity-50">
+            <button disabled={isProcessing} onClick={() => handleCommand("Digitalent, vamos Ã s perguntas")} className="group bg-gradient-to-br from-[#1a1a1a] to-[#111] border border-neutral-800 hover:border-indigo-500/50 p-5 rounded-xl text-left transition-all relative overflow-hidden disabled:opacity-50">
               <div className="absolute inset-0 bg-indigo-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
               <PlayCircle className="w-6 h-6 text-indigo-400 mb-3" />
               <div className="flex justify-between items-center mb-1">
@@ -178,14 +178,14 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
                   <input type="number" min="1" max="10" value={maxPerguntas} onChange={e => setMaxPerguntas(parseInt(e.target.value)||3)} className="w-12 bg-neutral-900 border border-neutral-700 rounded text-center text-xs text-white py-1" />
                 </div>
               </div>
-              <p className="text-xs text-neutral-500">{isProcessing ? "A processar..." : "A IA processa todas as mensagens, seleciona as melhores e abre a sessão."}</p>
+              <p className="text-xs text-neutral-500">{isProcessing ? "A processar..." : "A IA processa todas as mensagens, seleciona as melhores e abre a sessÃ£o."}</p>
             </button>
             
-            <button onClick={() => handleCommand("Próxima pergunta")} className="group bg-gradient-to-br from-[#1a1a1a] to-[#111] border border-neutral-800 hover:border-emerald-500/50 p-5 rounded-xl text-left transition-all relative overflow-hidden">
+            <button onClick={() => handleCommand("PrÃ³xima pergunta")} className="group bg-gradient-to-br from-[#1a1a1a] to-[#111] border border-neutral-800 hover:border-emerald-500/50 p-5 rounded-xl text-left transition-all relative overflow-hidden">
               <div className="absolute inset-0 bg-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
               <MessageSquare className="w-6 h-6 text-emerald-400 mb-3" />
-              <h4 className="font-semibold text-white mb-1">Próxima Pergunta <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full ml-2">{approvedQuestions.length} fila</span></h4>
-              <p className="text-xs text-neutral-500">Chama a próxima pergunta filtrada pela IA. Fecha automaticamente na última.</p>
+              <h4 className="font-semibold text-white mb-1">PrÃ³xima Pergunta <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full ml-2">{approvedQuestions.length} fila</span></h4>
+              <p className="text-xs text-neutral-500">Chama a prÃ³xima pergunta filtrada pela IA. Fecha automaticamente na Ãºltima.</p>
             </button>
           </div>
         </div>
@@ -193,7 +193,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
         {/* TELAS DO EVENTO */}
         <div className="bg-[#111] border border-neutral-800 rounded-2xl p-6">
           <h3 className="text-neutral-400 text-sm font-medium mb-4 uppercase tracking-wider flex items-center gap-2">
-            <Monitor className="w-4 h-4" /> Acesso às Telas do Evento
+            <Monitor className="w-4 h-4" /> Acesso Ã s Telas do Evento
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <a href={`/event/${eventId}/live`} target="_blank" className="group bg-gradient-to-br from-purple-900/20 to-[#111] border border-purple-500/30 hover:border-purple-500 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
@@ -210,8 +210,8 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
             <a href={`/event/${eventId}/pergunta`} target="_blank" className="group bg-gradient-to-br from-emerald-900/20 to-[#111] border border-emerald-500/30 hover:border-emerald-500 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
               <div>
                 <Smartphone className="w-6 h-6 text-emerald-400 mb-3" />
-                <h4 className="font-semibold text-white mb-1">Tela do Público (Q&A)</h4>
-                <p className="text-xs text-neutral-500">Abre a interface do celular onde a audiência envia perguntas para o sistema.</p>
+                <h4 className="font-semibold text-white mb-1">Tela do PÃºblico (Q&A)</h4>
+                <p className="text-xs text-neutral-500">Abre a interface do celular onde a audiÃªncia envia perguntas para o sistema.</p>
                 <div className="mt-4 px-3 py-2 bg-black/40 border border-emerald-500/20 rounded-lg text-emerald-300 font-mono text-[10px] break-all">
                   {typeof window !== 'undefined' ? `${window.location.origin}/event/${eventId}/pergunta` : `/event/${eventId}/pergunta`}
                 </div>
