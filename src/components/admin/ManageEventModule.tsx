@@ -12,9 +12,11 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     { time: new Date().toLocaleTimeString('pt-PT'), msg: "Sala de Controle Inicializada. Ligando ao Supabase..." }
   ]);
   const [loading, setLoading] = useState(true);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [pairingId, setPairingId] = useState("");
   
   // New States
-  const [speakersList, setSpeakersList] = useState<any[]>([]);
+  const [sessionsList, setSessionsList] = useState<any[]>([]);
   const [teleprompterMsg, setTeleprompterMsg] = useState("");
   const [managerName, setManagerName] = useState<string>("A procurar gestor...");
 
@@ -28,22 +30,34 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
 
     const fetchInitialData = async () => {
       setLoading(true);
-      const { data } = await supabase.from('events').select('personality').eq('id', eventId).single();
-      if (data?.personality) {
-        try { 
-          const parsed = JSON.parse(data.personality);
-          setEventConfig({ ...parsed, max_questions: parsed.max_questions || 3 }); 
-        } catch(e) {
-          setEventConfig({ max_questions: 3 });
+      const { data: eventData } = await supabase.from('events').select('personality').eq('id', eventId).single();
+      let config: any = { max_questions: 3 };
+      if (eventData?.personality) {
+        try {
+          config = { ...config, ...JSON.parse(eventData.personality) };
+        } catch (e) {
+          console.error(e);
         }
+      }
+      
+      if (config.pairing_code) {
+        setPairingId(config.pairing_code);
+        setEventConfig(config);
       } else {
-        setEventConfig({ max_questions: 3 });
+        const newCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+        setPairingId(newCode);
+        const updatedConfig = { ...config, pairing_code: newCode };
+        setEventConfig(updatedConfig);
+        await supabase.from('events').update({ personality: JSON.stringify(updatedConfig) }).eq('id', eventId);
       }
       
       // Fetch Speakers via sessions
-      const { data: sessionsData } = await supabase.from('sessions').select('*, speaker:speakers(*)').eq('event_id', eventId).order('created_at', { ascending: true });
+      const { data: sessionsData, error: sessionsError } = await supabase.from('sessions').select('*, speakers(*)').eq('event_id', eventId).order('created_at', { ascending: true });
+      if (sessionsError) {
+         console.error("Erro ao buscar oradores:", sessionsError);
+      }
       if (sessionsData) {
-         setSpeakersList(sessionsData.map((s:any) => s.speaker).filter(Boolean));
+         setSessionsList(sessionsData);
       }
 
       // Fetch Manager Name
@@ -95,7 +109,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
   };
 
   const updatePhase = async (phase: string) => {
-    const newConfig = { ...eventConfig, current_phase: phase };
+    const newConfig = { ...eventConfig, current_phase: phase, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
     addLog(`Fase alterada para: ${phase}`);
@@ -109,7 +123,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
       ai_force_speak: { text: predefinedText, time: Date.now() }
     } : {};
     
-    const newConfig = { ...eventConfig, macro_state: state, ...alertUpdate };
+    const newConfig = { ...eventConfig, macro_state: state, ...alertUpdate, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
     
@@ -119,49 +133,109 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     }
   };
 
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [closingRemark, setClosingRemark] = useState("");
+
   const triggerNextQuestion = async () => {
-    const nextQ = activeQueue.find(q => q.status === 'approved');
-    if (!nextQ) {
-      addLog("Fila vazia: não há perguntas aprovadas.");
+    const activeSession = sessionsList.find(s => s.status === 'live');
+    if (!activeSession) {
+      addLog("Nenhuma sessão ativa.");
       return;
     }
-    const currentActive = activeQueue.find(q => q.status === 'active');
-    if (currentActive) {
-      await supabase.from('questions').update({ status: 'completed' }).eq('id', currentActive.id);
+    
+    // Fetch fresh approved questions
+    const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
+
+    if (qs && qs.length > 0) {
+       const nextQ = qs[0];
+       let speech = nextQ.content;
+       if (qs.length === 1) {
+         speech += " " + (closingRemark || "Muito obrigado pelas tuas respostas. Foi um prazer contar contigo.");
+       }
+
+       const newConfig = { ...eventConfig, kill_audio: false, pause_audio: false, target_screen_id: pairingId || null, ai_force_speak: { text: speech, time: Date.now() } };
+       setEventConfig(newConfig);
+       await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+       
+       await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
+       addLog(`Pergunta ativada: "${nextQ.content.substring(0, 30)}..."`);
+       fetchQuestions(); // Refresh UI
+    } else {
+       addLog("Fila vazia: não há perguntas aprovadas na fila.");
     }
-    await supabase.from('questions').update({ status: 'active' }).eq('id', nextQ.id);
-    
-    addLog(`Próxima Pergunta em palco: "${nextQ.content}"`);
-    
-    const newConfig = { ...eventConfig, kill_audio: false, pause_audio: false };
-    setEventConfig(newConfig);
-    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
   };
 
   const triggerIntroQA = async () => {
     addLog("Comando: Iniciar Bloco Q&A!");
-    const newConfig = { ...eventConfig, kill_audio: false, pause_audio: false };
+    setIsProcessing(true);
+    addLog("A processar perguntas via OpenAI...");
+
+    try {
+      const activeSession = sessionsList.find(s => s.status === 'live');
+      if (!activeSession) {
+         addLog("ERRO: Nenhuma sessão ativa encontrada.");
+         setIsProcessing(false);
+         return;
+      }
+      const speakerObj = activeSession.speakers || activeSession.speaker;
+
+      const res = await fetch('/api/ai/qa-moderation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: activeSession.id,
+          maxPerguntas: eventConfig.max_questions || 3,
+          speakerName: speakerObj?.name || 'Orador',
+          theme: speakerObj?.bio || ''
+        })
+      });
+
+      const data = await res.json();
+      setIsProcessing(false);
+
+      if (data.success) {
+         addLog(`IA Processou ${data.processed} perguntas: ${data.approved} aprovadas, ${data.rejected} rejeitadas.`);
+         if (data.closing_remark) setClosingRemark(data.closing_remark);
+
+         const introText = `Muito bem. Recebi várias perguntas fantásticas do público. Vamos começar.`;
+         const newConfig = { ...eventConfig, kill_audio: false, pause_audio: false, target_screen_id: pairingId || null, ai_force_speak: { text: introText, time: Date.now() } };
+         setEventConfig(newConfig);
+         await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+         fetchQuestions();
+      } else {
+         addLog("ERRO no processamento de IA.");
+      }
+    } catch (e) {
+      setIsProcessing(false);
+      addLog("ERRO de execução de comando.");
+    }
+  };
+
+  const toggleAiMode = async () => {
+    const newMode = eventConfig?.ai_mode === 'auto' ? 'manual' : 'auto';
+    const newConfig = { ...eventConfig, ai_mode: newMode, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    addLog(`Modo de Q&A alterado para: ${newMode.toUpperCase()}`);
   };
 
   const killAudio = async () => {
     addLog("EMERGÊNCIA: Comando de Mutar IA enviado!");
-    const newConfig = { ...eventConfig, kill_audio: true };
+    const newConfig = { ...eventConfig, kill_audio: true, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
   };
 
   const pauseAudio = async () => {
     addLog("Comando: Pausar IA");
-    const newConfig = { ...eventConfig, pause_audio: true };
+    const newConfig = { ...eventConfig, pause_audio: true, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
   };
 
   const resumeAudio = async () => {
     addLog("Comando: Continuar IA");
-    const newConfig = { ...eventConfig, pause_audio: false, kill_audio: false };
+    const newConfig = { ...eventConfig, pause_audio: false, kill_audio: false, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
   };
@@ -170,7 +244,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     const currentIndex = eventConfig.current_slide_index || 0;
     const newIndex = increment ? currentIndex + 1 : Math.max(0, currentIndex - 1);
     
-    const newConfig = { ...eventConfig, current_slide_index: newIndex };
+    const newConfig = { ...eventConfig, current_slide_index: newIndex, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
     addLog(`Slide alterado manualmente para: ${newIndex + 1}`);
@@ -178,7 +252,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
 
   const toggleSliderMode = async () => {
     const newState = !eventConfig?.slider_mode_active;
-    const newConfig = { ...eventConfig, slider_mode_active: newState };
+    const newConfig = { ...eventConfig, slider_mode_active: newState, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
     addLog(`Modo Slider alterado para: ${newState ? 'ATIVO' : 'INATIVO'}`);
@@ -191,10 +265,20 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     addLog(`Limite de perguntas da IA alterado para: ${val}`);
   };
 
+  const activateSession = async (sessionId: string) => {
+    await supabase.from('sessions').update({ status: 'waiting' }).eq('event_id', eventId).eq('status', 'live');
+    await supabase.from('sessions').update({ status: 'live' }).eq('id', sessionId);
+    setSessionsList(prev => prev.map(s => ({
+       ...s, 
+       status: s.id === sessionId ? 'live' : (s.status === 'live' ? 'waiting' : s.status)
+    })));
+    addLog(`Orador ativado no ecrã principal.`);
+  };
+
   const sendTeleprompterAlert = async () => {
     if(!teleprompterMsg.trim()) return;
     try {
-      const newConfig = { ...eventConfig, teleprompter_alert: teleprompterMsg, teleprompter_alert_time: Date.now() };
+      const newConfig = { ...eventConfig, teleprompter_alert: teleprompterMsg, teleprompter_alert_time: Date.now(), target_screen_id: pairingId || null };
       setEventConfig(newConfig);
       
       const { error } = await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
@@ -234,22 +318,55 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
            {managerName}
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex gap-3 items-center relative">
+          <div className="flex items-center bg-slate-800/50 border border-slate-700/50 rounded-xl px-3 py-1.5 shadow-sm">
+            <span className="text-xs text-slate-400 mr-2 font-bold uppercase">Pareamento:</span>
+            <input 
+              type="text" 
+              value={pairingId} 
+              onChange={async (e) => {
+                const val = e.target.value.toUpperCase();
+                setPairingId(val);
+                if (val.length >= 4) {
+                   const newConfig = { ...eventConfig, pairing_code: val };
+                   setEventConfig(newConfig);
+                   await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+                }
+              }}
+              placeholder="Ex: A7B2"
+              className="w-16 bg-transparent text-emerald-400 text-sm font-black focus:outline-none placeholder-slate-600 text-center uppercase"
+              maxLength={6}
+            />
+          </div>
+
           <button 
              onClick={() => window.location.reload()}
-             className="bg-transparent border border-slate-600 hover:bg-slate-800 text-slate-200 font-medium py-2 px-4 rounded-xl transition-colors flex items-center gap-2"
+             className="bg-transparent border border-slate-600 hover:bg-slate-800 text-slate-200 font-medium py-2 px-3 rounded-xl transition-colors flex items-center gap-2 text-sm"
           >
-             Reiniciar sistema
+             Reiniciar
           </button>
-          <a 
-            href={`/event/${eventId}/live`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-white hover:bg-slate-200 text-slate-900 font-medium py-2 px-4 rounded-xl transition-colors flex items-center gap-2 shadow-sm"
-          >
-            <ExternalLink className="w-4 h-4" />
-            Abrir Ecrã do Evento
-          </a>
+          
+          <div className="relative">
+            <button 
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="bg-white hover:bg-slate-200 text-slate-900 font-medium py-2 px-4 rounded-xl transition-colors flex items-center gap-2 shadow-sm text-sm"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Abrir Ecrã
+            </button>
+            {isDropdownOpen && (
+              <div className="absolute right-0 top-full mt-2 w-56 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col">
+                <a href={`/event/${eventId}/live`} target="_blank" rel="noopener noreferrer" className="px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 transition-colors border-b border-slate-700/50 font-medium flex justify-between items-center" onClick={() => setIsDropdownOpen(false)}>
+                  Ecrã Padrão
+                  <ExternalLink className="w-3 h-3 text-slate-400" />
+                </a>
+                <a href={`/event/${eventId}/live-qa`} target="_blank" rel="noopener noreferrer" className="px-4 py-3 text-sm text-indigo-400 hover:bg-slate-700 transition-colors font-medium flex justify-between items-center" onClick={() => setIsDropdownOpen(false)}>
+                  Painel Q&A
+                  <ExternalLink className="w-3 h-3 text-indigo-500" />
+                </a>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -264,15 +381,19 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
             <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-4">Orador atual destacado</p>
             
             <div className="space-y-2 flex-1 overflow-y-auto pr-2">
-               {speakersList.length === 0 ? (
+               {sessionsList.length === 0 ? (
                  <div className="text-xs text-slate-500 p-4 text-center border border-dashed border-slate-700/50 rounded-lg">Nenhum orador cadastrado</div>
                ) : (
-                 speakersList.map((spk, idx) => {
-                   const isActive = idx === 0; // Exemplo temporário para visual
+                 sessionsList.map((sess, idx) => {
+                   const spk = sess.speakers || sess.speaker;
+                   if (!spk) return null;
+                   const isActive = sess.status === 'live';
                    return (
                      <div key={spk.id} className="flex gap-3 items-center">
                        <span className="font-black text-xl text-slate-500 w-6">{idx + 1}</span>
-                       <button className={`flex-1 py-2 px-4 rounded-xl text-sm font-bold text-left truncate transition-all border shadow-sm ${isActive ? 'bg-emerald-500/80 border-emerald-400 text-white' : 'bg-orange-500/80 border-orange-400 text-white hover:opacity-90'}`}>
+                       <button 
+                         onClick={() => activateSession(sess.id)}
+                         className={`flex-1 py-2 px-4 rounded-xl text-sm font-bold text-left truncate transition-all border shadow-sm ${isActive ? 'bg-emerald-500/80 border-emerald-400 text-white' : 'bg-orange-500/80 border-orange-400 text-white hover:opacity-90'}`}>
                          {spk.name}
                        </button>
                      </div>
@@ -352,9 +473,13 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
             <div className="flex-1 space-y-3 relative z-10">
                <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">2. Comandos de Áudio da IA</h4>
                
-               <button onClick={triggerIntroQA} className="w-full bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 p-3 rounded-xl flex items-center justify-center gap-3 transition-all shadow-sm">
+               <button onClick={toggleAiMode} className={`w-full p-2 rounded-xl text-xs font-bold transition-all mb-3 border shadow-sm ${eventConfig?.ai_mode === 'auto' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>
+                 Modo de Q&A: {eventConfig?.ai_mode === 'auto' ? 'Automático (Voz + Manual)' : 'Manual (Apenas Painel)'}
+               </button>
+
+               <button disabled={isProcessing} onClick={triggerIntroQA} className="w-full bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 p-3 rounded-xl flex items-center justify-center gap-3 transition-all shadow-sm disabled:opacity-50">
                  <PlayCircle className="w-5 h-5 text-indigo-600" />
-                 <span className="font-bold">Iniciar Bloco Q&A</span>
+                 <span className="font-bold">{isProcessing ? "A processar..." : "Iniciar Bloco Q&A"}</span>
                </button>
 
                <button onClick={triggerNextQuestion} className="w-full bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 p-3 rounded-xl flex items-center justify-center gap-3 transition-all shadow-sm">
@@ -402,12 +527,19 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                    <h4 className="text-sm font-semibold text-slate-100">Perguntas ao Orador</h4>
                 </div>
                 <p className="text-xs text-slate-500">Acesso via QR Code</p>
-                <button className="mt-3 text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/50 border border-slate-700/50 px-3 py-1.5 rounded-lg transition-colors">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/event/${eventId}/pergunta`);
+                    addLog("Link da Sala copiado para a área de transferência!");
+                    alert("Link copiado!");
+                  }}
+                  className="mt-3 text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/50 border border-slate-700/50 px-3 py-1.5 rounded-lg transition-colors"
+                >
                    Copiar Link para Sala
                 </button>
              </div>
              <div className="bg-white p-2 rounded-xl shadow-sm">
-                {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/join`} size={40} />}
+                {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/pergunta`} size={40} />}
              </div>
           </div>
         </div>

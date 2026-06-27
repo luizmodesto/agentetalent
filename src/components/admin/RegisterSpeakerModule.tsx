@@ -32,12 +32,7 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
 
   const fetchSpeakers = async () => {
     if (!selectedEventId) return;
-    // Speakers might not be directly linked to event_id in some schemas, but usually they are via sessions.
-    // Assuming we fetch all speakers for simplicity, or we join with sessions.
-    // If the schema for speakers doesn't have event_id, we just fetch all or we use sessions.
-    // Actually, in the previous implementation, speakers didn't have event_id, they were linked via sessions!
-    // Let's fetch all speakers for now.
-    const { data } = await supabase.from('speakers').select('*').order('created_at', { ascending: false });
+    const { data } = await supabase.from('speakers').select('*, sessions(events(title))').order('created_at', { ascending: false });
     if (data) setSpeakers(data);
   };
 
@@ -66,7 +61,7 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
 
         if (spk && spk[0] && selectedEventId) {
           await supabase.from('sessions').insert([{
-            event_id: selectedEventId, speaker_id: spk[0].id, title: `Sessão com ${formData.name}`, status: 'active'
+            event_id: selectedEventId, speaker_id: spk[0].id, title: `Sessão com ${formData.name}`, status: 'waiting'
           }]);
         }
         setStatus({ type: 'success', msg: "Orador cadastrado com sucesso!" });
@@ -189,25 +184,35 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-neutral-400 mb-1.5">URL da Foto do Orador</label>
-              <input type="text" name="photo_url" value={formData.photo_url} onChange={handleChange} className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors" placeholder="https://..." />
-            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <label className="block text-sm font-medium text-neutral-400 mb-1.5">URL da Foto do Orador</label>
+                <div className="flex gap-3">
+                  {formData.photo_url && (
+                    <div className="w-12 h-12 rounded-xl border border-neutral-700 overflow-hidden shrink-0 bg-neutral-800 flex items-center justify-center">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={formData.photo_url} alt="Preview" className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                    </div>
+                  )}
+                  <input type="text" name="photo_url" value={formData.photo_url} onChange={handleChange} className="flex-1 bg-[#1a1a1a] border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors" placeholder="https://..." />
+                </div>
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-neutral-400 mb-1.5 flex justify-between">
-                <span>Resumo do Orador (Bio) *</span>
-                <span className="text-xs text-indigo-400">Fornece material para a IA!</span>
-              </label>
-              <textarea 
-                required
-                name="bio"
-                value={formData.bio} 
-                onChange={handleChange} 
-                rows={4}
-                className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors" 
-                placeholder="Descreva o currículo do orador..." 
-              />
+              <div>
+                <label className="block text-sm font-medium text-neutral-400 mb-1.5 flex justify-between">
+                  <span>Resumo do Orador (Bio) *</span>
+                  <span className="text-xs text-indigo-400">Fornece material para a IA!</span>
+                </label>
+                <textarea 
+                  required
+                  name="bio"
+                  value={formData.bio} 
+                  onChange={handleChange} 
+                  rows={4}
+                  className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors" 
+                  placeholder="Descreva o currículo do orador..." 
+                />
+              </div>
             </div>
 
             <div className="pt-4 border-t border-neutral-800 flex justify-end gap-3">
@@ -245,6 +250,7 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
                   <input type="checkbox" checked={selectedIds.length === speakers.length && speakers.length > 0} onChange={handleSelectAll} className="w-4 h-4 rounded border-neutral-700 bg-[#111] text-indigo-500 focus:ring-indigo-500" />
                 </th>
                 <th className="px-4 py-3">Nome</th>
+                <th className="px-4 py-3">Evento(s)</th>
                 <th className="px-4 py-3">Cargo / Especialidade</th>
                 <th className="px-4 py-3">Empresa</th>
                 <th className="px-4 py-3 text-right rounded-tr-lg">Ações</th>
@@ -256,7 +262,24 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
                   <td className="px-4 py-3">
                     <input type="checkbox" checked={selectedIds.includes(spk.id)} onChange={() => handleSelect(spk.id)} className="w-4 h-4 rounded border-neutral-700 bg-[#111] text-indigo-500 focus:ring-indigo-500" />
                   </td>
-                  <td className="px-4 py-3 font-medium text-white">{spk.name}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full border border-neutral-700 overflow-hidden shrink-0 bg-neutral-800 flex items-center justify-center">
+                        {spk.photo_url ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img src={spk.photo_url} alt={spk.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <User className="w-4 h-4 text-neutral-500" />
+                        )}
+                      </div>
+                      <span className="font-medium text-white">{spk.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-indigo-400 font-medium text-xs">
+                    {spk.sessions && spk.sessions.length > 0 
+                      ? spk.sessions.map((s: any) => s.events?.title).filter(Boolean).join(', ') 
+                      : '-'}
+                  </td>
                   <td className="px-4 py-3">{spk.role} {spk.specialty ? `- ${spk.specialty}` : ''}</td>
                   <td className="px-4 py-3">{spk.company || '-'}</td>
                   <td className="px-4 py-3 text-right">
@@ -283,5 +306,3 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
     </div>
   );
 }
-
-// --- MODULE: REGISTER PARTICIPANT ---

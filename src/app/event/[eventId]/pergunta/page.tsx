@@ -20,7 +20,7 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
   const [inputs, setInputs] = useState<Record<string, { name: string, question: string }>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
 
-  const supabase = createClient();
+  const [supabase] = useState(() => createClient());
 
   // 1. Check LocalStorage for participant name
   useEffect(() => {
@@ -55,9 +55,8 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
         .from("sessions")
         .select("*")
         .eq("event_id", eventId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
+        .eq("status", "live")
+        .maybeSingle();
       
       if (session) setActiveSession(session);
 
@@ -85,16 +84,15 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
 
     fetchEventData();
 
-    // Subscribe to Sessions (to toggle Red/Green instantly)
+    // Subscribe to Sessions
     const sessionChannel = supabase.channel('public:sessions')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `event_id=eq.${eventId}` }, () => {
         fetchEventData(); 
       }).subscribe();
 
-    // Subscribe to Questions (to update footer counts instantly)
+    // Subscribe to Questions
     const questionsChannel = supabase.channel('public:questions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'questions' }, () => {
-        // Simple re-fetch of counts
         fetchEventData();
       }).subscribe();
 
@@ -103,6 +101,25 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
       supabase.removeChannel(questionsChannel);
     };
   }, [eventId, supabase]);
+
+  // 3. Presence Realtime
+  useEffect(() => {
+    if (!hasJoined || !participantName) return;
+
+    const presenceChannel = supabase.channel(`presence_${eventId}`, {
+      config: { presence: { key: participantName } }
+    });
+
+    presenceChannel.on('presence', { event: 'sync' }, () => {}).subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await presenceChannel.track({ name: participantName, online_at: new Date().toISOString() });
+      }
+    });
+
+    return () => {
+      supabase.removeChannel(presenceChannel);
+    };
+  }, [eventId, hasJoined, participantName, supabase]);
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,31 +174,34 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
   };
 
   if (isLoading) {
-    return <div className="min-h-screen bg-slate-100 flex items-center justify-center text-slate-500">Carregando portal...</div>;
+    return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">Carregando portal...</div>;
   }
 
   // --- WELCOME GATE ---
   if (!hasJoined) {
     return (
-      <div className="min-h-screen bg-[#0A192F] flex flex-col items-center justify-center p-4">
-        <div className="bg-white max-w-md w-full rounded-2xl shadow-2xl p-8 text-center border-t-4 border-emerald-500">
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">Bem-vindo(a)!</h1>
-          <p className="text-sm text-slate-500 mb-8">
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans">
+        <div className="bg-white max-w-md w-full rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-8 md:p-10 text-center border border-slate-100">
+          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm">
+             <span className="font-bold text-2xl">Olá</span>
+          </div>
+          <h1 className="text-2xl font-bold text-slate-800 mb-2">Bem-vindo(a)</h1>
+          <p className="text-sm text-slate-500 mb-8 leading-relaxed">
             Para participar e enviar perguntas aos oradores, por favor identifique-se.
           </p>
-          <form onSubmit={handleJoin} className="space-y-4 text-left">
+          <form onSubmit={handleJoin} className="space-y-5 text-left">
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1">Como devemos chamá-lo(a)?</label>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Como devemos chamá-lo(a)?</label>
               <input 
                 type="text" 
                 required
-                placeholder="Ex: João Silva"
-                className="w-full border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                placeholder="O seu nome..."
+                className="w-full border-0 bg-slate-100/50 rounded-xl px-4 py-3.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all placeholder:text-slate-400 font-medium"
                 value={participantName}
                 onChange={e => setParticipantName(e.target.value)}
               />
             </div>
-            <button type="submit" className="w-full bg-[#0A192F] text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition-colors shadow-lg">
+            <button type="submit" className="w-full bg-slate-900 text-white font-medium py-3.5 rounded-xl hover:bg-slate-800 transition-colors shadow-md shadow-slate-900/10">
               Entrar no Evento
             </button>
           </form>
@@ -194,83 +214,69 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
   const activeSpeaker = speakers.find(s => s.id === activeSession?.speaker_id);
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
       
       {/* HEADER DINÂMICO */}
-      <div className="bg-[#0A192F] text-white border-b-4 border-[#081324] shadow-md px-4 md:px-8 py-6 pb-8">
-         <div className="max-w-5xl mx-auto flex justify-between items-start gap-4">
+      <div className="bg-white/80 backdrop-blur-xl border-b border-slate-200/60 sticky top-0 z-50">
+         <div className="max-w-5xl mx-auto px-4 md:px-8 py-5 flex justify-between items-center gap-4">
             <div className="flex-1">
-               <h1 className="text-2xl md:text-3xl font-bold mb-2">
-                 Perguntas abertas para {activeSpeaker?.name || "..."}
-               </h1>
-               <p className="text-sm text-slate-400">
-                 Tema: {activeSpeaker?.role || "Geral"}. Envie sua pergunta pelo celular enquanto a sessao estiver verde.
+               <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">
+                 {activeSpeaker ? "Sessão Aberta" : "Aguardando"}
                </p>
+               <h1 className="text-xl md:text-2xl font-bold text-slate-800 leading-tight">
+                 {activeSpeaker?.name || "Nenhum orador em palco"}
+               </h1>
             </div>
-            {/* MINI QR CODE */}
-            <div className="bg-white p-2 rounded-xl flex flex-col items-center shadow-lg shrink-0 w-[90px] md:w-[110px]">
-               {typeof window !== 'undefined' && <QRCode value={window.location.href} size={256} className="w-full h-auto" />}
-               <span className="text-[7px] md:text-[9px] text-slate-500 mt-1 break-all text-center leading-tight">
-                 {typeof window !== 'undefined' ? window.location.origin : ''}
-               </span>
+            {/* LOGOTIPO DO EVENTO */}
+            <div className="shrink-0 flex items-center justify-center">
+               <img src="https://i.imgur.com/EpDGrzT.png" alt="Logo do Evento" className="h-10 md:h-12 object-contain" />
             </div>
          </div>
       </div>
 
       {/* GRID DE CARDS DOS ORADORES */}
-      <div className="max-w-5xl mx-auto w-full p-4 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+      <div className="max-w-5xl mx-auto w-full p-4 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 items-start pb-20">
         {speakers.map(speaker => {
           const isActive = activeSession?.speaker_id === speaker.id;
           const currentInput = inputs[speaker.id] || { name: participantName, question: "" };
           const qCount = questionsCount[speaker.id] || 0;
           
           return (
-            <div key={speaker.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col transition-all">
+            <div key={speaker.id} className={`bg-white rounded-3xl overflow-hidden transition-all duration-300 ${isActive ? 'shadow-[0_8px_30px_rgb(0,0,0,0.06)] border border-blue-100/50 scale-[1.01]' : 'shadow-sm border border-slate-100 opacity-70 scale-100 grayscale-[20%]'}`}>
               
-              <div className="p-5 flex flex-col gap-4">
+              <div className="p-6 md:p-8 flex flex-col gap-5">
                 {/* TOPO: Nome e Badge */}
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start gap-4">
                   <div>
                     <h2 className="text-lg font-bold text-slate-800 leading-tight">{speaker.name}</h2>
-                    <p className="text-xs text-slate-500 mt-0.5">{speaker.role}</p>
+                    <p className="text-sm text-slate-500 mt-1">{speaker.role}</p>
                   </div>
-                  <div className={`px-3 py-1 rounded-full text-xs font-bold shrink-0 ${
-                    isActive ? "bg-emerald-100 text-emerald-700" : "bg-red-50 text-red-600"
+                  <div className={`px-3 py-1.5 rounded-full text-[10px] uppercase tracking-wider font-bold shrink-0 ${
+                    isActive ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-400"
                   }`}>
-                    {isActive ? "Aberto" : "Fechado"}
+                    {isActive ? "Em Palco" : "Aguardando"}
                   </div>
-                </div>
-
-                {/* AVISO COLORIDO */}
-                <div className={`px-4 py-2.5 rounded-lg text-sm font-semibold ${
-                  isActive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"
-                }`}>
-                  {isActive ? "Sessao verde: escreva sua pergunta." : "Sessao vermelha: aguarde este orador abrir."}
                 </div>
 
                 {/* FORMULÁRIO */}
                 <form onSubmit={(e) => handleSubmitQuestion(e, speaker.id)} className="space-y-4 mt-2">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Seu nome</label>
                     <input 
                       type="text" 
-                      placeholder="Opcional"
-                      disabled={!isActive}
-                      value={currentInput.name}
-                      onChange={(e) => handleInputChange(speaker.id, 'name', e.target.value)}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 transition-colors"
+                      disabled
+                      value={participantName}
+                      className="w-full border-0 bg-slate-50 rounded-xl px-4 py-3 text-sm text-slate-400 font-medium cursor-not-allowed"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Pergunta</label>
                     <textarea 
                       required
-                      placeholder={`Digite sua pergunta para ${speaker.name.split(' ')[0]}`}
+                      placeholder={`Qual a sua pergunta para ${speaker.name.split(' ')[0]}?`}
                       disabled={!isActive}
                       value={currentInput.question}
                       onChange={(e) => handleInputChange(speaker.id, 'question', e.target.value)}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 transition-colors resize-none h-24"
+                      className="w-full border-0 bg-slate-50 rounded-xl px-4 py-4 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:bg-slate-50/50 disabled:text-slate-400 transition-all resize-none h-28 placeholder:text-slate-400"
                     />
                   </div>
 
@@ -278,20 +284,21 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
                   <button 
                     type="submit" 
                     disabled={!isActive || submitting[speaker.id]}
-                    className={`w-full font-bold py-3.5 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                    className={`w-full font-medium py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 ${
                       isActive 
-                        ? "bg-[#1E824C] hover:bg-[#15673a] text-white shadow-md shadow-[#1E824C]/20" 
-                        : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                        ? "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/20" 
+                        : "bg-slate-100 text-slate-400 cursor-not-allowed"
                     }`}
                   >
-                    {submitting[speaker.id] ? "Enviando..." : "Enviar pergunta"}
+                    {submitting[speaker.id] ? "Enviando..." : "Enviar Pergunta"}
                   </button>
                 </form>
               </div>
 
               {/* RODAPÉ: Contador */}
-              <div className="bg-slate-50 border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
-                {qCount} pergunta(s) recebida(s) para este orador.
+              <div className="bg-slate-50/50 px-6 py-4 text-xs font-medium text-slate-400 flex justify-between items-center border-t border-slate-50">
+                <span>Total de perguntas recebidas</span>
+                <span className="bg-white shadow-sm px-2 py-0.5 rounded-md text-slate-600">{qCount}</span>
               </div>
             </div>
           );
