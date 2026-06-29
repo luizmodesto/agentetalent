@@ -98,8 +98,10 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
 
     // Subscribe to Events
     const eventChannel = supabase.channel('public:events')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, () => {
-        fetchEventData(); 
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, (payload) => {
+        if (payload.new) {
+          setEventData(payload.new);
+        }
       }).subscribe();
 
     return () => { 

@@ -59,9 +59,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
              if (voiceConfig.pitch) setPitch(voiceConfig.pitch);
              if (voiceConfig.tts_provider === 'native' && voiceConfig.voice_id) setVoiceURI(voiceConfig.voice_id);
              
-             if (config.is_event_open !== undefined) {
-                setIsEventOpen(config.is_event_open);
-             }
+             setIsEventOpen(config.is_event_open === true);
            } catch(e) {}
         }
       }
@@ -94,9 +92,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
            try {
              const config = JSON.parse(payload.new.personality);
              
-             if (config.is_event_open !== undefined) {
-                setIsEventOpen(config.is_event_open);
-             }
+             setIsEventOpen(config.is_event_open === true);
              
              // PAIRING LOCK: Only execute commands if target_screen_id matches!
              if (config.target_screen_id === screenId) {
