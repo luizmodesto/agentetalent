@@ -115,6 +115,14 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     addLog(`Fase alterada para: ${phase}`);
   };
 
+  const toggleEventOpen = async () => {
+    const newState = !eventConfig?.is_event_open;
+    const newConfig = { ...eventConfig, is_event_open: newState, target_screen_id: pairingId || null };
+    setEventConfig(newConfig);
+    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    addLog(`Evento ${newState ? 'ABERTO' : 'FECHADO'} para entrada de participantes.`);
+  };
+
   const updateMacroState = async (state: string) => {
     const predefinedText = eventConfig?.macro_texts?.[state];
     const alertUpdate = predefinedText ? { 
@@ -449,8 +457,15 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
             <div className="mb-6 relative z-10">
                <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">1. Fase do Evento</h4>
                
-               <button className="w-full bg-white text-slate-900 font-bold py-2.5 rounded-xl mb-3 text-sm shadow-sm hover:bg-slate-200 transition-colors">
-                 Play List Musicas
+               <button 
+                 onClick={toggleEventOpen}
+                 className={`w-full font-bold py-2.5 rounded-xl mb-3 text-sm shadow-sm transition-colors border ${
+                   !eventConfig?.is_event_open 
+                     ? "bg-amber-500/20 text-amber-500 border-amber-500/50 hover:bg-amber-500/30" 
+                     : "bg-emerald-500/20 text-emerald-400 border-emerald-500/50 hover:bg-emerald-500/30"
+                 }`}
+               >
+                 {!eventConfig?.is_event_open ? '🛑 Sala de Espera Ativa (Evento Fechado)' : '✅ Evento Aberto (Recebendo Perguntas)'}
                </button>
 
                <div className="grid grid-cols-4 gap-2">

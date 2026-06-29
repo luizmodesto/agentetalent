@@ -17,6 +17,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   const [aiState, setAiState] = useState<"idle" | "processing" | "speaking">("idle");
   const [currentText, setCurrentText] = useState("A aguardar interação...");
   const [displayedText, setDisplayedText] = useState("");
+  const [isEventOpen, setIsEventOpen] = useState(false);
   
   const [authorsData, setAuthorsData] = useState<{text: string, value: number}[]>([]);
   const [activeParticipants, setActiveParticipants] = useState<string[]>([]);
@@ -57,6 +58,10 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
              if (voiceConfig.speed) setRate(voiceConfig.speed);
              if (voiceConfig.pitch) setPitch(voiceConfig.pitch);
              if (voiceConfig.tts_provider === 'native' && voiceConfig.voice_id) setVoiceURI(voiceConfig.voice_id);
+             
+             if (config.is_event_open !== undefined) {
+                setIsEventOpen(config.is_event_open);
+             }
            } catch(e) {}
         }
       }
@@ -88,6 +93,10 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
         if (payload.new && payload.new.personality) {
            try {
              const config = JSON.parse(payload.new.personality);
+             
+             if (config.is_event_open !== undefined) {
+                setIsEventOpen(config.is_event_open);
+             }
              
              // PAIRING LOCK: Only execute commands if target_screen_id matches!
              if (config.target_screen_id === screenId) {
@@ -308,6 +317,41 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
           >
             CONECTAR ECRÃ
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- WAITING ROOM (Big Screen) ---
+  if (!isEventOpen && isAuthenticated) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center p-4 font-sans relative overflow-hidden bg-[#0A0F1C]">
+        <div 
+          className="absolute inset-0 bg-cover bg-center opacity-40 mix-blend-screen"
+          style={{ backgroundImage: "url('/waiting-bg.png')" }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0F1C] via-[#0A0F1C]/80 to-transparent" />
+        
+        <div className="relative z-10 flex flex-col items-center max-w-4xl w-full text-center">
+          <img src={logoUrl || "https://i.imgur.com/EpDGrzT.png"} alt="Logo do Evento" className="h-32 md:h-48 object-contain mb-8 animate-pulse drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" />
+          
+          <h1 className="text-6xl md:text-8xl font-black text-white mb-6 tracking-tight drop-shadow-lg">
+            A sala vai abrir dia <br/><span className="text-emerald-400">09/07/2026</span>
+          </h1>
+          
+          <p className="text-2xl md:text-3xl text-slate-300 mb-12 leading-relaxed max-w-3xl drop-shadow-md">
+            Prepare-se para uma experiência incrível. Acesse o site <a href="https://digitalent.pt" target="_blank" rel="noopener noreferrer" className="text-emerald-400 font-bold hover:text-emerald-300 underline decoration-emerald-400/30 underline-offset-4 transition-colors">digitalent.pt</a> e fique sempre atento às novidades.
+          </p>
+          
+          <div className="flex items-center justify-center gap-8 bg-slate-900/60 backdrop-blur-md p-6 rounded-[2rem] border border-slate-700 shadow-2xl">
+             <div className="bg-white p-3 rounded-2xl">
+               {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/pergunta`} size={120} />}
+             </div>
+             <div className="text-left">
+               <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">Junte-se à fila</p>
+               <p className="font-black text-emerald-400 text-3xl uppercase">Aponte a Câmera</p>
+             </div>
+          </div>
         </div>
       </div>
     );

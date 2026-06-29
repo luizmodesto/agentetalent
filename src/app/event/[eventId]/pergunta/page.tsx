@@ -96,9 +96,16 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
         fetchEventData();
       }).subscribe();
 
+    // Subscribe to Events
+    const eventChannel = supabase.channel('public:events')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, () => {
+        fetchEventData(); 
+      }).subscribe();
+
     return () => { 
       supabase.removeChannel(sessionChannel);
       supabase.removeChannel(questionsChannel);
+      supabase.removeChannel(eventChannel);
     };
   }, [eventId, supabase]);
 
@@ -175,6 +182,49 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
 
   if (isLoading) {
     return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">Carregando portal...</div>;
+  }
+
+  let eventConfig: any = {};
+  try {
+     if (eventData?.personality) {
+        eventConfig = JSON.parse(eventData.personality);
+     }
+  } catch(e) {}
+  
+  const isEventOpen = eventConfig.is_event_open === true;
+
+  // --- WAITING ROOM ---
+  if (!isEventOpen && !isLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 font-sans relative overflow-hidden bg-[#0A0F1C]">
+        <div 
+          className="absolute inset-0 bg-cover bg-center opacity-40 mix-blend-screen"
+          style={{ backgroundImage: "url('/waiting-bg.png')" }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0F1C] via-[#0A0F1C]/80 to-transparent" />
+        
+        <div className="relative z-10 flex flex-col items-center max-w-lg w-full text-center">
+          <img src="https://i.imgur.com/EpDGrzT.png" alt="Logo do Evento" className="h-24 md:h-32 object-contain mb-8 animate-pulse drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" />
+          
+          <h1 className="text-4xl md:text-5xl font-black text-white mb-4 tracking-tight drop-shadow-lg">
+            A sala vai abrir dia <br/><span className="text-emerald-400">09/07/2026</span>
+          </h1>
+          
+          <p className="text-lg text-slate-300 mb-10 leading-relaxed max-w-md drop-shadow-md">
+            Prepare-se para uma experiência incrível. Acesse o nosso site e fique sempre atento às novidades do evento.
+          </p>
+          
+          <a 
+            href="https://digitalent.pt" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-bold text-lg py-4 px-8 rounded-full shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:shadow-[0_0_40px_rgba(16,185,129,0.5)] transition-all transform hover:scale-105"
+          >
+            Acessar digitalent.pt
+          </a>
+        </div>
+      </div>
+    );
   }
 
   // --- WELCOME GATE ---
