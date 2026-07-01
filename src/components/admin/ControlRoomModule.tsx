@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect } from "react";
 import { 
@@ -67,9 +67,9 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
       const { createClient } = await import('@supabase/supabase-js');
       const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'), (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder'));
 
-      if (cmd === "Digitalent, vamos Ã s perguntas") {
+      if (cmd === "Digitalent, vamos às perguntas") {
         if (!activeSession || !speaker) {
-          addLog("ERRO: Nenhuma sessÃ£o ativa encontrada.");
+          addLog("ERRO: Nenhuma sessão ativa encontrada.");
           return;
         }
 
@@ -97,17 +97,17 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
              setClosingRemark(data.closing_remark);
            }
            // Trigger AI Introduction
-           const introText = `Muito bem. Recebi vÃ¡rias perguntas fantÃ¡sticas do pÃºblico. Vamos comeÃ§ar.`;
+           const introText = `Muito bem. Recebi várias perguntas fantásticas do público. Vamos começar.`;
            await supabase.from('events').update({
              personality: JSON.stringify({ ai_force_speak: { text: introText, time: Date.now() }, target_screen_id: 'ALL' })
            }).eq('id', eventId);
-           addLog("Teleprompter: IntroduÃ§Ã£o do Q&A enviada.");
+           addLog("Teleprompter: Introdução do Q&A enviada.");
         } else {
            addLog("ERRO no processamento de IA.");
         }
       }
 
-      if (cmd === "PrÃ³xima pergunta") {
+      if (cmd === "Próxima pergunta") {
         // Find next approved question that hasn't been read
         const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
         
@@ -130,12 +130,12 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
            // Mark as answered
            await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
         } else {
-           addLog("Aviso: NÃ£o hÃ¡ mais perguntas aprovadas na fila.");
+           addLog("Aviso: Não há mais perguntas aprovadas na fila.");
         }
       }
     } catch(e) {
       setIsProcessing(false);
-      addLog("ERRO de execuÃ§Ã£o de comando.");
+      addLog("ERRO de execução de comando.");
     }
   };
 
@@ -143,17 +143,19 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
       <div className="xl:col-span-2 space-y-6">
         {/* EVENT STATE */}
-        <div className="bg-[#111] border border-neutral-800 rounded-2xl p-6">
-          <h3 className="text-neutral-400 text-sm font-medium mb-4 uppercase tracking-wider">Estado do Evento</h3>
-          <div className="flex gap-2 flex-wrap">
+        <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-sm">
+          <h3 className="text-slate-400 text-xs font-bold mb-4 uppercase tracking-widest flex items-center gap-2">
+            <Activity className="w-4 h-4 text-indigo-400" /> Estado do Evento
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {["Abertura", "Orador Atual", "Bloco de Perguntas", "Encerramento"].map(phase => (
               <button 
                 key={phase}
                 onClick={() => { setEventPhase(phase); addLog(`Fase alterada para: ${phase}`); }}
-                className={`flex-1 min-w-[140px] py-3 px-4 rounded-xl text-sm font-medium transition-all ${
+                className={`py-3 px-4 rounded-xl text-xs font-bold transition-all shadow-sm ${
                   eventPhase === phase 
-                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" 
-                    : "bg-[#1a1a1a] text-neutral-400 hover:bg-neutral-800 border border-neutral-800"
+                    ? "bg-indigo-600 text-white shadow-indigo-500/20" 
+                    : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-slate-700/50"
                 }`}
               >
                 {phase}
@@ -163,60 +165,63 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
         </div>
 
         {/* TRIGGERS */}
-        <div className="bg-[#111] border border-neutral-800 rounded-2xl p-6">
-          <h3 className="text-neutral-400 text-sm font-medium mb-4 uppercase tracking-wider flex items-center gap-2">
-            <Mic className="w-4 h-4" /> Gatilhos de Comando (Teleprompter)
+        <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-sm">
+          <h3 className="text-slate-400 text-xs font-bold mb-4 uppercase tracking-widest flex items-center gap-2">
+            <Mic className="w-4 h-4 text-emerald-400" /> Gatilhos de Comando (Teleprompter)
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button disabled={isProcessing} onClick={() => handleCommand("Digitalent, vamos Ã s perguntas")} className="group bg-gradient-to-br from-[#1a1a1a] to-[#111] border border-neutral-800 hover:border-indigo-500/50 p-5 rounded-xl text-left transition-all relative overflow-hidden disabled:opacity-50">
+            <button disabled={isProcessing} onClick={() => handleCommand("Digitalent, vamos às perguntas")} className="group bg-slate-800/80 border border-slate-700/50 hover:border-indigo-400/50 p-5 rounded-xl text-left transition-all relative overflow-hidden disabled:opacity-50 shadow-sm">
               <div className="absolute inset-0 bg-indigo-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
               <PlayCircle className="w-6 h-6 text-indigo-400 mb-3" />
               <div className="flex justify-between items-center mb-1">
-                <h4 className="font-semibold text-white">Iniciar Bloco Q&A</h4>
+                <h4 className="font-bold text-slate-100">Iniciar Bloco Q&A</h4>
                 <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                  <label className="text-[10px] text-neutral-500 uppercase">Limite:</label>
-                  <input type="number" min="1" max="10" value={maxPerguntas} onChange={e => setMaxPerguntas(parseInt(e.target.value)||3)} className="w-12 bg-neutral-900 border border-neutral-700 rounded text-center text-xs text-white py-1" />
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Limite:</label>
+                  <input type="number" min="1" max="10" value={maxPerguntas} onChange={e => setMaxPerguntas(parseInt(e.target.value)||3)} className="w-12 bg-slate-900 border border-slate-700/50 rounded text-center text-xs font-bold text-indigo-400 py-1 focus:outline-none focus:border-indigo-500" />
                 </div>
               </div>
-              <p className="text-xs text-neutral-500">{isProcessing ? "A processar..." : "A IA processa todas as mensagens, seleciona as melhores e abre a sessÃ£o."}</p>
+              <p className="text-xs text-slate-400">{isProcessing ? "A processar..." : "A IA processa todas as mensagens, seleciona as melhores e abre a sessão."}</p>
             </button>
             
-            <button onClick={() => handleCommand("PrÃ³xima pergunta")} className="group bg-gradient-to-br from-[#1a1a1a] to-[#111] border border-neutral-800 hover:border-emerald-500/50 p-5 rounded-xl text-left transition-all relative overflow-hidden">
+            <button onClick={() => handleCommand("Próxima pergunta")} className="group bg-slate-800/80 border border-slate-700/50 hover:border-emerald-400/50 p-5 rounded-xl text-left transition-all relative overflow-hidden shadow-sm">
               <div className="absolute inset-0 bg-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
               <MessageSquare className="w-6 h-6 text-emerald-400 mb-3" />
-              <h4 className="font-semibold text-white mb-1">PrÃ³xima Pergunta <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full ml-2">{approvedQuestions.length} fila</span></h4>
-              <p className="text-xs text-neutral-500">Chama a prÃ³xima pergunta filtrada pela IA. Fecha automaticamente na Ãºltima.</p>
+              <h4 className="font-bold text-slate-100 mb-1 flex items-center gap-2">
+                Próxima Pergunta 
+                <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">{approvedQuestions.length} fila</span>
+              </h4>
+              <p className="text-xs text-slate-400">Chama a próxima pergunta filtrada pela IA. Fecha automaticamente na última.</p>
             </button>
           </div>
         </div>
 
         {/* TELAS DO EVENTO */}
-        <div className="bg-[#111] border border-neutral-800 rounded-2xl p-6">
-          <h3 className="text-neutral-400 text-sm font-medium mb-4 uppercase tracking-wider flex items-center gap-2">
-            <Monitor className="w-4 h-4" /> Acesso Ã s Telas do Evento
+        <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-sm">
+          <h3 className="text-slate-400 text-xs font-bold mb-4 uppercase tracking-widest flex items-center gap-2">
+            <Monitor className="w-4 h-4 text-purple-400" /> Acesso às Telas do Evento
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <a href={`/event/${eventId}/live`} target="_blank" className="group bg-gradient-to-br from-purple-900/20 to-[#111] border border-purple-500/30 hover:border-purple-500 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
+            <a href={`/event/${eventId}/live`} target="_blank" className="group bg-slate-800/50 border border-slate-700/50 hover:bg-slate-700/50 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
               <div>
-                <MonitorPlay className="w-6 h-6 text-purple-400 mb-3" />
-                <h4 className="font-semibold text-white mb-1">Painel do Palestrante</h4>
-                <p className="text-xs text-neutral-500">Abre a tela que fica no palco para o orador interagir com a IA (Teleprompter).</p>
+                <MonitorPlay className="w-6 h-6 text-purple-400 mb-3 group-hover:scale-110 transition-transform" />
+                <h4 className="font-bold text-slate-200 mb-1">Painel do Palestrante</h4>
+                <p className="text-xs text-slate-400">Abre a tela que fica no palco para o orador interagir com a IA (Teleprompter).</p>
               </div>
-              <div className="mt-4 flex items-center gap-2 text-xs font-medium text-purple-400 group-hover:translate-x-1 transition-transform">
+              <div className="mt-4 flex items-center gap-2 text-xs font-bold text-purple-400 group-hover:translate-x-1 transition-transform">
                 Abrir em nova aba <ExternalLink className="w-3 h-3" />
               </div>
             </a>
             
-            <a href={`/event/${eventId}/pergunta`} target="_blank" className="group bg-gradient-to-br from-emerald-900/20 to-[#111] border border-emerald-500/30 hover:border-emerald-500 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
+            <a href={`/event/${eventId}/pergunta`} target="_blank" className="group bg-slate-800/50 border border-slate-700/50 hover:bg-slate-700/50 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
               <div>
-                <Smartphone className="w-6 h-6 text-emerald-400 mb-3" />
-                <h4 className="font-semibold text-white mb-1">Tela do PÃºblico (Q&A)</h4>
-                <p className="text-xs text-neutral-500">Abre a interface do celular onde a audiÃªncia envia perguntas para o sistema.</p>
-                <div className="mt-4 px-3 py-2 bg-black/40 border border-emerald-500/20 rounded-lg text-emerald-300 font-mono text-[10px] break-all">
+                <Smartphone className="w-6 h-6 text-emerald-400 mb-3 group-hover:scale-110 transition-transform" />
+                <h4 className="font-bold text-slate-200 mb-1">Tela do Público (Q&A)</h4>
+                <p className="text-xs text-slate-400">Abre a interface do celular onde a audiência envia perguntas para o sistema.</p>
+                <div className="mt-4 px-3 py-2 bg-slate-900/80 border border-slate-700/50 rounded-lg text-emerald-400 font-mono text-[10px] break-all flex items-center justify-between group-hover:border-emerald-500/50 transition-colors">
                   {typeof window !== 'undefined' ? `${window.location.origin}/event/${eventId}/pergunta` : `/event/${eventId}/pergunta`}
                 </div>
               </div>
-              <div className="mt-4 flex items-center gap-2 text-xs font-medium text-emerald-400 group-hover:translate-x-1 transition-transform">
+              <div className="mt-4 flex items-center gap-2 text-xs font-bold text-emerald-400 group-hover:translate-x-1 transition-transform">
                 Abrir em nova aba <ExternalLink className="w-3 h-3" />
               </div>
             </a>
@@ -225,20 +230,20 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
       </div>
 
       {/* TERMINAL / LOGS */}
-      <div className="bg-[#0f0f13] border border-neutral-800 rounded-2xl p-6 flex flex-col h-[500px] xl:h-auto font-mono">
-        <h3 className="text-neutral-500 text-xs mb-4 uppercase flex items-center gap-2">
-          <TerminalSquare className="w-4 h-4" /> DIGITALENT System Output
+      <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-sm flex flex-col h-[500px] xl:h-auto font-mono">
+        <h3 className="text-slate-400 text-xs font-bold mb-4 uppercase tracking-widest flex items-center gap-2">
+          <TerminalSquare className="w-4 h-4 text-slate-500" /> System Output
         </h3>
-        <div className="flex-1 overflow-y-auto space-y-2 text-sm">
+        <div className="flex-1 bg-slate-900/50 border border-slate-700/50 rounded-xl p-4 overflow-y-auto space-y-3 text-[11px] scrollbar-thin scrollbar-thumb-slate-700 shadow-inner">
           {logs.map((log, i) => (
-            <div key={i} className="flex gap-3 text-neutral-400">
-              <span className="text-neutral-600 shrink-0">[{log.time}]</span>
-              <span className={log.msg.includes("Comando") ? "text-indigo-400" : "text-emerald-500"}>
+            <div key={i} className="flex gap-3 text-slate-400 border-l-2 border-slate-700/50 pl-2">
+              <span className="text-slate-600 shrink-0">[{log.time}]</span>
+              <span className={log.msg.includes("Comando") ? "text-indigo-400 font-semibold" : log.msg.includes("ERRO") ? "text-red-400 font-semibold" : "text-emerald-400"}>
                 {log.msg}
               </span>
             </div>
           ))}
-          <div className="animate-pulse flex gap-2 text-neutral-600">
+          <div className="animate-pulse flex gap-2 text-emerald-500/50 mt-2">
             <span>_</span>
           </div>
         </div>

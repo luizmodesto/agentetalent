@@ -13,14 +13,22 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   const [screenId, setScreenId] = useState("");
   const [eventName, setEventName] = useState("DIGITALENT");
   const [logoUrl, setLogoUrl] = useState("");
+  const [buttonText, setButtonText] = useState("CONECTAR ECRÃ");
+  const inputRef = useRef<HTMLInputElement>(null);
   
-  const [aiState, setAiState] = useState<"idle" | "processing" | "speaking">("idle");
+  const [aiState, setAiState] = useState<"idle" | "processing" | "speaking" | "paused">("idle");
   const [currentText, setCurrentText] = useState("A aguardar interação...");
   const [displayedText, setDisplayedText] = useState("");
   const [isEventOpen, setIsEventOpen] = useState(false);
+  const [currentPhase, setCurrentPhase] = useState("Abertura");
+  const [aiMode, setAiMode] = useState("auto");
+  const lastAlertTimeRef = useRef<number>(0);
+  const lastSpokenTextRef = useRef<string>("");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   
   const [authorsData, setAuthorsData] = useState<{text: string, value: number}[]>([]);
   const [activeParticipants, setActiveParticipants] = useState<string[]>([]);
+  const [questionAuthors, setQuestionAuthors] = useState<string[]>([]);
   const [speaker, setSpeaker] = useState<{name: string, bio: string, image_url: string} | null>(null);
   const [sponsors, setSponsors] = useState<string[]>([]);
   
@@ -60,6 +68,9 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
              if (voiceConfig.tts_provider === 'native' && voiceConfig.voice_id) setVoiceURI(voiceConfig.voice_id);
              
              setIsEventOpen(config.is_event_open === true);
+             if (config.current_phase) setCurrentPhase(config.current_phase);
+             if (config.ai_mode) setAiMode(config.ai_mode);
+             if (config.ai_force_speak?.time) lastAlertTimeRef.current = config.ai_force_speak.time;
            } catch(e) {}
         }
       }
@@ -74,13 +85,39 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
          });
       }
 
-      // fetchQuestions removido
+      // Fetch all question authors for the event
+      const { data: sessions } = await supabase.from('sessions').select('id').eq('event_id', eventId);
+      if (sessions && sessions.length > 0) {
+        const sessionIds = sessions.map((s: any) => s.id);
+        const { data: qData } = await supabase.from('questions').select('author_name').in('session_id', sessionIds);
+        if (qData) {
+           const names = new Set<string>();
+           qData.forEach((q: any) => {
+              if (q.author_name) names.add(q.author_name);
+           });
+           setQuestionAuthors(Array.from(names));
+        }
+      }
     };
 
     fetchConfig();
   }, [eventId, isAuthenticated]);
 
-  // Remover fetchQuestions já que vamos usar apenas Presence para a Nuvem de Palavras
+  // Combine presence and questions for Word Cloud
+  useEffect(() => {
+     const allNames = new Set([...activeParticipants, ...questionAuthors]);
+     const namesArray = Array.from(allNames);
+     
+     const mappedData = namesArray.map(name => {
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) {
+          hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const size = (Math.abs(hash) % 25) + 18; 
+        return { text: name, value: size };
+     });
+     setAuthorsData(mappedData);
+  }, [activeParticipants, questionAuthors]);
 
   // Realtime Subscriptions
   useEffect(() => {
@@ -91,36 +128,31 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
         if (payload.new && payload.new.personality) {
            try {
              const config = JSON.parse(payload.new.personality);
-             
              setIsEventOpen(config.is_event_open === true);
+             if (config.current_phase) setCurrentPhase(config.current_phase);
+             if (config.ai_mode) setAiMode(config.ai_mode);
              
-             // PAIRING LOCK: Only execute commands if target_screen_id matches!
-             if (config.target_screen_id === screenId) {
-                if (config.ai_force_speak && config.ai_force_speak.time) {
-                   const timeSinceSpeak = Date.now() - config.ai_force_speak.time;
-                   if (timeSinceSpeak < 5000) {
-                     forceAISpeak(config.ai_force_speak.text);
-                   }
-                }
-                
-                if (config.teleprompter_alert && config.teleprompter_alert_time) {
-                   const timeSinceAlert = Date.now() - config.teleprompter_alert_time;
-                   if (timeSinceAlert < 5000) {
-                     forceAISpeak(config.teleprompter_alert);
-                   }
-                }
-
-                if (config.kill_audio) {
-                   setAiState("idle");
-                   setCurrentText("Áudio interrompido.");
-                   window.speechSynthesis.cancel();
-                }
+             if (config.ai_force_speak && config.ai_force_speak.time && config.ai_force_speak.time > lastAlertTimeRef.current) {
+                lastAlertTimeRef.current = config.ai_force_speak.time;
+                forceAISpeak(config.ai_force_speak.text);
              }
            } catch(e) {}
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'questions' }, () => {
-         // Não fazemos re-fetch do wordcloud por questões, apenas por presence
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'questions' }, async (payload) => {
+         // Re-fetch all question authors when a new question arrives to ensure we capture all event participants
+         const { data: sessions } = await supabase.from('sessions').select('id').eq('event_id', eventId);
+         if (sessions && sessions.length > 0) {
+            const sessionIds = sessions.map((s: any) => s.id);
+            const { data: qData } = await supabase.from('questions').select('author_name').in('session_id', sessionIds);
+            if (qData) {
+               const names = new Set<string>();
+               qData.forEach((q: any) => {
+                  if (q.author_name) names.add(q.author_name);
+               });
+               setQuestionAuthors(Array.from(names));
+            }
+         }
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sessions' }, async (payload) => {
          if (payload.new.status === 'live') {
@@ -136,6 +168,48 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
       })
       .subscribe();
 
+    const commandChannel = supabase.channel('live_screen_commands')
+      .on('broadcast', { event: 'audio_command' }, (payload) => {
+         const data = payload.payload;
+         // PAIRING LOCK: Only execute commands if target_screen_id matches!
+         if (data.target_screen_id === screenId) {
+            switch(data.command) {
+              case 'intro':
+              case 'play_question':
+                 if (data.text) {
+                   forceAISpeak(data.text);
+                   lastSpokenTextRef.current = data.text;
+                 }
+                 break;
+              case 'repeat_question':
+                 if (lastSpokenTextRef.current) {
+                    forceAISpeak("Claro, vou repetir o que disse: " + lastSpokenTextRef.current);
+                 }
+                 break;
+              case 'kill':
+                 setAiState("idle");
+                 setCurrentText("Áudio interrompido.");
+                 if (audioRef.current) {
+                    audioRef.current.pause();
+                    audioRef.current.currentTime = 0;
+                    audioRef.current = null;
+                 }
+                 if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                 break;
+              case 'pause':
+                 setAiState("paused");
+                 if (audioRef.current) audioRef.current.pause();
+                 if ('speechSynthesis' in window) window.speechSynthesis.pause();
+                 break;
+              case 'resume':
+                 setAiState("speaking");
+                 if (audioRef.current) audioRef.current.play().catch(()=>{});
+                 if ('speechSynthesis' in window) window.speechSynthesis.resume();
+                 break;
+            }
+         }
+      }).subscribe();
+
     const presenceChannel = supabase.channel(`presence_${eventId}`);
     presenceChannel.on('presence', { event: 'sync' }, () => {
        const state = presenceChannel.presenceState();
@@ -147,21 +221,11 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
        }
        const namesArray = Array.from(names);
        setActiveParticipants(namesArray);
-       
-       // Alimentar o WordCloud com os nomes dos participantes (tamanhos aleatórios pseudo-determinísticos para não saltar muito)
-       const mappedData = namesArray.map(name => {
-          let hash = 0;
-          for (let i = 0; i < name.length; i++) {
-            hash = name.charCodeAt(i) + ((hash << 5) - hash);
-          }
-          const size = (Math.abs(hash) % 25) + 18; 
-          return { text: name, value: size };
-       });
-       setAuthorsData(mappedData);
     }).subscribe();
 
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(commandChannel);
       supabase.removeChannel(presenceChannel);
     };
   }, [eventId, screenId, language, rate, pitch, voiceURI]);
@@ -203,10 +267,14 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
+        audioRef.current = audio;
         audio.volume = volume;
         audio.playbackRate = rate;
         
-        audio.onended = () => setAiState("idle");
+        audio.onended = () => {
+           setAiState("idle");
+           audioRef.current = null;
+        };
         audio.onerror = () => fallbackToNativeTTS(text);
         
         setAiState("speaking");
@@ -245,31 +313,78 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   }, [currentText, aiState, rate]);
 
 
-  // Word Cloud Render
-  useEffect(() => {
-    if (containerRef.current) {
-       containerRef.current.innerHTML = ''; // Limpar o canvas/div antigo sempre!
-       
-       if (authorsData.length > 0) {
-         setTimeout(async () => {
-           if (!containerRef.current) return;
-           const WordCloud = (await import("wordcloud")).default;
-           WordCloud(containerRef.current, {
-             list: authorsData.map(a => [a.text, a.value]),
-             fontFamily: 'Inter, sans-serif',
-             weight: 'bold',
-             color: () => colors[Math.floor(Math.random() * colors.length)],
-             rotateRatio: 0.3,
-             rotationSteps: 2,
-             backgroundColor: 'transparent',
-             shape: 'circle',
-             gridSize: 12,
-             drawOutOfBound: false,
-             shrinkToFit: true,
-           });
-         }, 300); // Dar tempo para a DOM assentar
-       }
+  // Removed wordcloud library usage as it renders canvas, preventing CSS animations
+  // We will map authorsData directly to HTML spans in the render function
+
+  // CSS styles for the animated Word Cloud spans
+  const wordCloudStyles = `
+    @keyframes wordFade {
+      0% { opacity: 0; filter: blur(3px); }
+      15% { opacity: 1; filter: blur(0px); }
+      85% { opacity: 1; filter: blur(0px); }
+      100% { opacity: 0; filter: blur(3px); }
     }
+    
+    .wordcloud-container span {
+      animation: wordFade 8s ease-in-out infinite;
+      will-change: opacity, filter;
+      text-shadow: 0 0 15px rgba(255,255,255,0.1);
+    }
+    
+    .wordcloud-container span:nth-child(2n) {
+      animation-duration: 12s;
+      animation-delay: -3s;
+    }
+    .wordcloud-container span:nth-child(3n) {
+      animation-duration: 10s;
+      animation-delay: -7s;
+    }
+    .wordcloud-container span:nth-child(5n) {
+      animation-duration: 15s;
+      animation-delay: -2s;
+    }
+    .wordcloud-container span:nth-child(7n) {
+      animation-duration: 18s;
+      animation-delay: -11s;
+    }
+  `;
+
+  // Draw WordCloud using wordcloud2.js
+  useEffect(() => {
+    if (typeof window === 'undefined' || authorsData.length === 0 || !containerRef.current) return;
+    
+    let isCancelled = false;
+    
+    import('wordcloud').then((mod) => {
+      if (isCancelled || !containerRef.current) return;
+      const WordCloud = mod.default || mod;
+      
+      const list = authorsData.map(a => [a.text, Math.min(Math.max(a.value, 15), 45)]);
+      
+      // Clean up previous elements if any
+      const container = containerRef.current;
+      Array.from(container.children).forEach(child => {
+         if (child.tagName.toUpperCase() === 'SPAN') {
+            container.removeChild(child);
+         }
+      });
+      
+      WordCloud(container, {
+        list: list,
+        fontFamily: 'sans-serif',
+        fontWeight: 'bold',
+        color: () => colors[Math.floor(Math.random() * colors.length)],
+        rotateRatio: 0.3,
+        rotationSteps: 2,
+        backgroundColor: 'transparent',
+        gridSize: 12,
+        weightFactor: (size: number) => size * 1.5,
+        shrinkToFit: true,
+        drawOutOfBound: false,
+      });
+    });
+    
+    return () => { isCancelled = true; };
   }, [authorsData]);
 
   // Load Voices
@@ -295,23 +410,28 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
           <h2 className="text-2xl font-black mb-2 tracking-widest text-center uppercase">Ligar ao Evento</h2>
           <p className="text-slate-400 text-sm mb-8 text-center">Introduza o código de pareamento visível no Painel de Controlo.</p>
           <input 
+            ref={inputRef}
             type="text" 
-            value={enteredCode}
-            onChange={(e) => setEnteredCode(e.target.value.toUpperCase())}
+            defaultValue=""
             maxLength={6}
             placeholder="EX: A7B2"
-            className="w-full bg-slate-800/80 border border-slate-600 rounded-xl px-4 py-4 text-center text-3xl font-black tracking-widest text-emerald-400 mb-6 focus:outline-none focus:border-indigo-500"
+            className="w-full bg-slate-800/80 border border-slate-600 rounded-xl px-4 py-4 text-center text-3xl font-black tracking-widest text-emerald-400 mb-6 focus:outline-none focus:border-indigo-500 uppercase"
           />
           <button 
             onClick={() => {
-               if (enteredCode.length >= 4) {
-                 setScreenId(enteredCode);
+               setButtonText("A VERIFICAR...");
+               const val = inputRef.current?.value || "";
+               if (val.trim().length >= 4) {
+                 setScreenId(val.trim().toUpperCase());
                  setIsAuthenticated(true);
+               } else {
+                 setButtonText("CÓDIGO INVÁLIDO!");
+                 setTimeout(() => setButtonText("CONECTAR ECRÃ"), 2000);
                }
             }}
             className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl transition-colors tracking-widest"
           >
-            CONECTAR ECRÃ
+            {buttonText}
           </button>
         </div>
       </div>
@@ -356,6 +476,8 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   return (
     <div className="h-screen w-full bg-[#1E222B] text-white flex flex-col p-6 overflow-hidden font-sans">
       
+      <style>{wordCloudStyles}</style>
+
       {/* HEADER */}
       <header className="flex justify-between items-center h-20 shrink-0 border-b border-slate-700/50 pb-4 mb-6">
         <div className="flex items-center gap-4 w-1/3">
@@ -367,6 +489,10 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
           <h2 className="text-3xl font-black uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">
              Painel de Perguntas
           </h2>
+          <div className="flex gap-2 mt-2">
+             <span className="bg-slate-800/80 border border-slate-700/50 px-3 py-1 text-[10px] font-bold uppercase rounded-full text-indigo-300 tracking-wider">Fase: {currentPhase}</span>
+             <span className="bg-slate-800/80 border border-slate-700/50 px-3 py-1 text-[10px] font-bold uppercase rounded-full text-emerald-300 tracking-wider">Modo IA: {aiMode}</span>
+          </div>
         </div>
 
         <div className="w-1/3 flex justify-end items-center gap-6">
@@ -376,19 +502,20 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
           </div>
 
           <div className={`flex items-center gap-3 border-2 px-5 py-2 rounded-2xl transition-colors duration-500 bg-slate-900/50 backdrop-blur-md shadow-lg
-            ${aiState === "idle" ? "border-red-500/30" : 
-              aiState === "processing" ? "border-amber-500/50" : "border-emerald-500/50"}`}>
+            ${aiState === "processing" ? "border-amber-500/50" : "border-emerald-500/30"}`}>
             <div className={`w-3 h-3 rounded-full ${
-              aiState === "idle" ? "bg-red-500" : 
-              aiState === "processing" ? "bg-amber-500 animate-pulse" : "bg-emerald-500 animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.8)]"
+              aiState === "processing" ? "bg-amber-500 animate-pulse" : 
+              aiState === "speaking" ? "bg-emerald-400 animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.8)]" :
+              "bg-emerald-500"
             }`}></div>
             <div className="flex flex-col">
                <span className="font-black text-sm uppercase tracking-widest text-slate-200">DIGITALENT</span>
                <span className={`text-[10px] uppercase font-bold tracking-widest ${
-                 aiState === "idle" ? "text-red-400" : 
                  aiState === "processing" ? "text-amber-400" : "text-emerald-400"
                }`}>
-                 {aiState === "idle" ? "Inativa" : aiState === "processing" ? "A Processar..." : "A Falar"}
+                 {aiState === "idle" ? "Ativa (Online)" : 
+                  aiState === "processing" ? "A Processar..." : 
+                  aiState === "paused" ? "Pausada" : "A Falar"}
                </span>
             </div>
           </div>
@@ -403,7 +530,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
           <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-purple-500/5"></div>
           
           <div className="relative z-10 w-full text-center">
-             {aiState === "idle" && (
+             {aiState === "idle" && currentText === "A aguardar interação..." && (
                 <div className="text-slate-500 text-3xl font-light mb-4">
                    Aguardando perguntas...
                 </div>
@@ -417,9 +544,11 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
         {/* NUVEM E ORADOR */}
         <div className="flex-[2] flex flex-col gap-6">
            <div className="flex-[2] bg-slate-900/40 backdrop-blur-md border border-slate-700/50 rounded-3xl p-6 relative overflow-hidden flex flex-col shadow-lg">
-              <h3 className="text-center font-bold text-slate-400 uppercase tracking-widest text-xs mb-4">Participantes Ativos</h3>
-              <div className="flex-1 w-full h-full relative min-h-[150px]">
-                 <div ref={containerRef} className="absolute inset-0 w-full h-full"></div>
+              <h3 className="text-center font-bold text-slate-400 uppercase tracking-widest text-xs mb-4 z-10">Participantes Ativos</h3>
+              <div ref={containerRef} className="wordcloud-container flex-1 w-full h-full relative overflow-hidden">
+                 {authorsData.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center text-slate-500 font-light text-sm italic">Nenhum participante...</div>
+                 )}
               </div>
            </div>
 

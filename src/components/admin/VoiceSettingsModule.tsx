@@ -91,6 +91,12 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
     
     // --- 1. CHECAGEM (CHECK) DO PROVEDOR ATIVO ANTES DE SALVAR ---
     try {
+        if (ttsProvider === "openai" && language === "pt-PT") {
+           alert("Regra de Sistema: A OpenAI (TTS-1) não suporta Português de Portugal nativo (gera sotaque do Brasil). Como exigiu 'Português de Portugal', não é possível usar a OpenAI. Mude o Provedor Principal para 'Nativo (Browser)' ou 'ElevenLabs' para garantir o sotaque exigido.");
+           setIsLoading(false);
+           return;
+        }
+
         const apiKey = (ttsProvider === "fishaudio" ? fishApiKey : (ttsProvider === "openai" ? "dummy" : elevenLabsApiKey))?.trim() || "";
         const vId = (ttsProvider === "fishaudio" ? fishReferenceId : (ttsProvider === "openai" ? openaiVoice : voiceId))?.trim() || "";
         
@@ -428,6 +434,12 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
               <div className="space-y-4">
                 <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-sm text-blue-400">
                   <p>A OpenAI utiliza a chave padrão do sistema. O modelo de ultra-baixa latência <b>tts-1</b> será utilizado. Clonagem desativada para a OpenAI (vozes restritas à plataforma).</p>
+                  {language === "pt-PT" && (
+                     <p className="mt-2 text-red-400 font-bold flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4" /> 
+                        Incompatível com Português de Portugal (Sotaque BR). Escolha Nativo ou ElevenLabs.
+                     </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-neutral-400 mb-2">Vozes de Palco</label>

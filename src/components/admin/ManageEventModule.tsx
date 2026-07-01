@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, ExternalLink, User, Bot, Settings, Activity, Mic, PlayCircle, FastForward, Pause, Play, MicOff, MonitorPlay, LinkIcon, UserCheck, Radio, TerminalSquare } from "lucide-react";
+import { ArrowLeft, ExternalLink, User, Bot, Settings, Activity, Mic, PlayCircle, FastForward, Pause, Play, MicOff, MonitorPlay, LinkIcon, UserCheck, Radio, TerminalSquare, ChevronUp, ChevronDown, MessageSquare, AlertCircle, Monitor, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import QRCode from "react-qr-code";
 
@@ -19,6 +19,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
   const [sessionsList, setSessionsList] = useState<any[]>([]);
   const [teleprompterMsg, setTeleprompterMsg] = useState("");
   const [managerName, setManagerName] = useState<string>("A procurar gestor...");
+  const [activeUsersCount, setActiveUsersCount] = useState(0);
+  const liveCommandChannelRef = React.useRef<any>(null);
 
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString('pt-PT');
@@ -86,13 +88,32 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
       }).subscribe();
 
     const questionsSub = supabase.channel('questions_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'questions' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'questions' }, (payload: any) => {
          fetchQuestions();
+         if (payload.eventType === 'INSERT') {
+           runSilentCuration();
+         }
       }).subscribe();
+
+    const presenceChannel = supabase.channel(`presence_${eventId}_manage`);
+    presenceChannel.on('presence', { event: 'sync' }, () => {
+       const state = presenceChannel.presenceState();
+       let count = 0;
+       for (const key in state) {
+          count += state[key].length;
+       }
+       setActiveUsersCount(count);
+    }).subscribe();
+
+    const cmdChannel = supabase.channel('live_screen_commands');
+    cmdChannel.subscribe();
+    liveCommandChannelRef.current = cmdChannel;
 
     return () => {
       supabase.removeChannel(eventSub);
       supabase.removeChannel(questionsSub);
+      supabase.removeChannel(presenceChannel);
+      supabase.removeChannel(cmdChannel);
     };
   }, [eventId, supabase]);
 
@@ -121,6 +142,87 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
     addLog(`Evento ${newState ? 'ABERTO' : 'FECHADO'} para entrada de participantes.`);
+    
+    if (newState) {
+      addLog("Modo Curadoria Silenciosa ATIVADO. Novas perguntas serão processadas em background.");
+      runSilentCuration(); // Run immediately once when opened
+    }
+  };
+
+  const runSilentCuration = async () => {
+     if (!eventConfig?.is_event_open) return;
+     const activeSession = sessionsList.find(s => s.status === 'live');
+     if (!activeSession) return;
+     
+     const speakerObj = activeSession.speakers || activeSession.speaker;
+     try {
+       await fetch('/api/ai/qa-curation', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           sessionId: activeSession.id,
+           maxPerguntas: eventConfig.speaker_questions?.[activeSession.id] || eventConfig.max_questions || 3,
+           speakerName: speakerObj?.name || 'Orador',
+           theme: speakerObj?.bio || ''
+         })
+       });
+       fetchQuestions(); // update UI after curation
+     } catch (e) {
+       console.error("Erro na curadoria silenciosa", e);
+     }
+  };
+
+  const sortedSessions = [...sessionsList].sort((a, b) => {
+    const seq = eventConfig?.speaker_sequence || [];
+    const indexA = seq.indexOf(a.id);
+    const indexB = seq.indexOf(b.id);
+    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+    if (indexA !== -1) return -1;
+    if (indexB !== -1) return 1;
+    return 0; // fallback to original order
+  });
+
+  const moveSpeaker = async (index: number, direction: 'up' | 'down') => {
+    const newSessions = [...sortedSessions];
+    if (direction === 'up' && index > 0) {
+      [newSessions[index - 1], newSessions[index]] = [newSessions[index], newSessions[index - 1]];
+    } else if (direction === 'down' && index < newSessions.length - 1) {
+      [newSessions[index + 1], newSessions[index]] = [newSessions[index], newSessions[index + 1]];
+    } else {
+      return;
+    }
+    
+    const newSequence = newSessions.map(s => s.id);
+    const newConfig = { ...eventConfig, speaker_sequence: newSequence, target_screen_id: pairingId || null };
+    setEventConfig(newConfig);
+    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+  };
+
+  const updateSpeakerQuestions = async (sessionId: string, val: number) => {
+    if (isNaN(val) || val < 1) val = 1;
+    const currentMap = eventConfig.speaker_questions || {};
+    const newConfig = { 
+      ...eventConfig, 
+      speaker_questions: { ...currentMap, [sessionId]: val },
+      target_screen_id: pairingId || null
+    };
+    setEventConfig(newConfig);
+    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    addLog(`Perguntas para orador atualizadas para ${val}.`);
+  };
+
+  const broadcastCommand = (cmd: string, payload: any = {}) => {
+     if (liveCommandChannelRef.current) {
+        liveCommandChannelRef.current.send({
+           type: 'broadcast',
+           event: 'audio_command',
+           payload: {
+              target_screen_id: pairingId || null,
+              command: cmd,
+              ...payload
+           }
+        });
+     }
   };
 
   const updateMacroState = async (state: string) => {
@@ -157,14 +259,37 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     if (qs && qs.length > 0) {
        const nextQ = qs[0];
        let speech = nextQ.content;
+       
        if (qs.length === 1) {
-         speech += " " + (closingRemark || "Muito obrigado pelas tuas respostas. Foi um prazer contar contigo.");
+         // Generate transition closing phrase on the fly if it's the last question
+         setIsProcessing(true);
+         const activeSessionIndex = sessionsList.findIndex(s => s.status === 'live');
+         const nextSession = sessionsList[activeSessionIndex + 1];
+         const nextSpeakerName = nextSession ? (nextSession.speakers?.name || nextSession.speaker?.name) : null;
+         const speakerObj = activeSession.speakers || activeSession.speaker;
+
+         try {
+           const res = await fetch('/api/ai/qa-moderation', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+               managerName: managerName,
+               speakerName: speakerObj?.name || 'Orador',
+               nextSpeakerName: nextSpeakerName,
+               action: 'closing'
+             })
+           });
+           const data = await res.json();
+           if (data.success && data.text) {
+              speech += " " + data.text;
+           }
+         } catch (e) {
+           console.error("Erro a gerar fecho:", e);
+         }
+         setIsProcessing(false);
        }
 
-       const newConfig = { ...eventConfig, kill_audio: false, pause_audio: false, target_screen_id: pairingId || null, ai_force_speak: { text: speech, time: Date.now() } };
-       setEventConfig(newConfig);
-       await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
-       
+       broadcastCommand('play_question', { text: speech });
        await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
        addLog(`Pergunta ativada: "${nextQ.content.substring(0, 30)}..."`);
        fetchQuestions(); // Refresh UI
@@ -173,45 +298,60 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     }
   };
 
+  const repeatCurrentQuestion = async () => {
+    broadcastCommand('repeat_question');
+    addLog("Comando: Repetir Pergunta enviado via Realtime!");
+  };
+
   const triggerIntroQA = async () => {
     addLog("Comando: Iniciar Bloco Q&A!");
     setIsProcessing(true);
-    addLog("A processar perguntas via OpenAI...");
+    addLog("A gerar introdução de palco...");
 
     try {
-      const activeSession = sessionsList.find(s => s.status === 'live');
+      const activeSessionIndex = sessionsList.findIndex(s => s.status === 'live');
+      const activeSession = sessionsList[activeSessionIndex];
       if (!activeSession) {
          addLog("ERRO: Nenhuma sessão ativa encontrada.");
          setIsProcessing(false);
          return;
       }
+      
       const speakerObj = activeSession.speakers || activeSession.speaker;
+
+      const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
+      let firstQuestion = null;
+      let firstQuestionId = null;
+      if (qs && qs.length > 0) {
+         firstQuestion = qs[0].content;
+         firstQuestionId = qs[0].id;
+      }
 
       const res = await fetch('/api/ai/qa-moderation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: activeSession.id,
-          maxPerguntas: eventConfig.max_questions || 3,
+          managerName: managerName,
           speakerName: speakerObj?.name || 'Orador',
-          theme: speakerObj?.bio || ''
+          action: 'intro',
+          firstQuestion: firstQuestion
         })
       });
 
       const data = await res.json();
       setIsProcessing(false);
 
-      if (data.success) {
-         addLog(`IA Processou ${data.processed} perguntas: ${data.approved} aprovadas, ${data.rejected} rejeitadas.`);
-         if (data.closing_remark) setClosingRemark(data.closing_remark);
-
-         const introText = `Muito bem. Recebi várias perguntas fantásticas do público. Vamos começar.`;
-         const newConfig = { ...eventConfig, kill_audio: false, pause_audio: false, target_screen_id: pairingId || null, ai_force_speak: { text: introText, time: Date.now() } };
-         setEventConfig(newConfig);
-         await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
-         fetchQuestions();
+      if (data.success && data.text) {
+         addLog(`Introdução gerada com sucesso!`);
+         broadcastCommand('intro', { text: data.text });
+         
+         if (firstQuestionId) {
+            await supabase.from('questions').update({ status: 'answered' }).eq('id', firstQuestionId);
+            addLog(`Primeira pergunta ativada na introdução.`);
+            fetchQuestions();
+         }
       } else {
-         addLog("ERRO no processamento de IA.");
+         addLog("ERRO no processamento de IA (Intro).");
       }
     } catch (e) {
       setIsProcessing(false);
@@ -229,23 +369,17 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
 
   const killAudio = async () => {
     addLog("EMERGÊNCIA: Comando de Mutar IA enviado!");
-    const newConfig = { ...eventConfig, kill_audio: true, target_screen_id: pairingId || null };
-    setEventConfig(newConfig);
-    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    broadcastCommand('kill');
   };
 
   const pauseAudio = async () => {
     addLog("Comando: Pausar IA");
-    const newConfig = { ...eventConfig, pause_audio: true, target_screen_id: pairingId || null };
-    setEventConfig(newConfig);
-    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    broadcastCommand('pause');
   };
 
   const resumeAudio = async () => {
     addLog("Comando: Continuar IA");
-    const newConfig = { ...eventConfig, pause_audio: false, kill_audio: false, target_screen_id: pairingId || null };
-    setEventConfig(newConfig);
-    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    broadcastCommand('resume');
   };
 
   const changeSlideIndex = async (increment: boolean) => {
@@ -311,24 +445,26 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
   return (
     <div className="space-y-4">
       {/* HEADER */}
-      <div className="flex items-center justify-between border-b border-slate-700/50 pb-4">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-slate-800/80 pb-4">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="text-slate-400 hover:text-white flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-800/50 transition-colors">
             <ArrowLeft className="w-4 h-4" /> Voltar
           </button>
-          <div>
-            <h2 className="text-xl font-bold text-white">Live Controller (ID: {eventId.substring(0, 8)}...)</h2>
+          <div className="border-l border-slate-700/50 pl-4">
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+               Live Controller (ID: {eventId.substring(0, 8)}...)
+            </h2>
             <p className="text-sm text-slate-400">Gestão ao vivo da palestra e interação com a Inteligência Artificial.</p>
           </div>
         </div>
         
-        <div className="font-bold text-white text-lg tracking-wide hidden md:block">
-           {managerName}
-        </div>
-
-        <div className="flex gap-3 items-center relative">
-          <div className="flex items-center bg-slate-800/50 border border-slate-700/50 rounded-xl px-3 py-1.5 shadow-sm">
-            <span className="text-xs text-slate-400 mr-2 font-bold uppercase">Pareamento:</span>
+        <div className="flex gap-4 items-center mt-4 md:mt-0">
+          <div className="flex items-center gap-2 mr-2">
+             <div className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-500 flex items-center justify-center text-xs font-bold border border-amber-500/30">TS</div>
+             <span className="font-bold text-slate-200 text-sm tracking-wide hidden md:block">{managerName}</span>
+          </div>
+          <div className="flex items-center bg-[#0F172A] border border-slate-800 rounded-full px-4 py-1.5 shadow-sm">
+            <span className="text-xs text-slate-400 mr-2 font-bold uppercase tracking-widest">PAREAMENTO:</span>
             <input 
               type="text" 
               value={pairingId} 
@@ -341,25 +477,26 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
                 }
               }}
-              placeholder="Ex: A7B2"
-              className="w-16 bg-transparent text-emerald-400 text-sm font-black focus:outline-none placeholder-slate-600 text-center uppercase"
-              maxLength={6}
+              placeholder="Ex: 8TTE"
+              className="w-12 bg-transparent text-[#10B981] text-xs font-black focus:outline-none placeholder-slate-600 text-center uppercase"
+              maxLength={4}
             />
           </div>
 
           <button 
              onClick={() => window.location.reload()}
-             className="bg-transparent border border-slate-600 hover:bg-slate-800 text-slate-200 font-medium py-2 px-3 rounded-xl transition-colors flex items-center gap-2 text-sm"
+             className="bg-transparent border border-slate-700/50 hover:bg-slate-800 text-slate-300 py-2 px-3 rounded-lg transition-colors flex items-center gap-2 text-sm shadow-sm"
           >
+             <RotateCcw className="w-4 h-4" />
              Reiniciar
           </button>
           
           <div className="relative">
             <button 
               onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className="bg-white hover:bg-slate-200 text-slate-900 font-medium py-2 px-4 rounded-xl transition-colors flex items-center gap-2 shadow-sm text-sm"
+              className="bg-[#F59E0B] hover:bg-amber-400 text-amber-950 font-bold py-2.5 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-sm text-sm"
             >
-              <ExternalLink className="w-4 h-4" />
+              <Monitor className="w-4 h-4" />
               Abrir Ecrã
             </button>
             {isDropdownOpen && (
@@ -380,30 +517,50 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         
-        {/* COLUNA 1: SEQUÊNCIA E VOZ IA */}
-        <div className="space-y-4 flex flex-col h-full">
-          <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm flex flex-col h-[300px]">
+        {/* COLUNA 1: SEQUÊNCIA ORADORES E CONFIGURAÇÃO VOZ */}
+        <div className="space-y-4 flex flex-col h-full col-span-1">
+
+          {/* Sequência Oradores */}
+          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col flex-1 min-h-[300px]">
             <h3 className="font-semibold text-slate-100 mb-2 flex items-center gap-2">
-              <User className="w-4 h-4 text-slate-400" /> Sequência Oradores
+              <User className="w-4 h-4 text-indigo-400" /> Sequência Oradores
             </h3>
             <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-4">Orador atual destacado</p>
             
-            <div className="space-y-2 flex-1 overflow-y-auto pr-2">
+            <div className="space-y-3 flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700">
                {sessionsList.length === 0 ? (
                  <div className="text-xs text-slate-500 p-4 text-center border border-dashed border-slate-700/50 rounded-lg">Nenhum orador cadastrado</div>
                ) : (
-                 sessionsList.map((sess, idx) => {
+                 sortedSessions.map((sess, idx) => {
                    const spk = sess.speakers || sess.speaker;
                    if (!spk) return null;
                    const isActive = sess.status === 'live';
                    return (
-                     <div key={spk.id} className="flex gap-3 items-center">
-                       <span className="font-black text-xl text-slate-500 w-6">{idx + 1}</span>
-                       <button 
-                         onClick={() => activateSession(sess.id)}
-                         className={`flex-1 py-2 px-4 rounded-xl text-sm font-bold text-left truncate transition-all border shadow-sm ${isActive ? 'bg-emerald-500/80 border-emerald-400 text-white' : 'bg-orange-500/80 border-orange-400 text-white hover:opacity-90'}`}>
-                         {spk.name}
-                       </button>
+                     <div key={spk.id} className="flex flex-col gap-1 mb-3">
+                       <div className="flex gap-3 items-center">
+                         <div className="flex flex-col items-center">
+                           <button onClick={() => moveSpeaker(idx, 'up')} className="text-slate-500 hover:text-white pb-1"><ChevronUp className="w-4 h-4" /></button>
+                           <span className="font-black text-sm text-slate-400 w-6 text-center">{idx + 1}</span>
+                           <button onClick={() => moveSpeaker(idx, 'down')} className="text-slate-500 hover:text-white pt-1"><ChevronDown className="w-4 h-4" /></button>
+                         </div>
+                         <div className="flex-1 flex flex-col gap-2">
+                           <button 
+                             onClick={() => activateSession(sess.id)}
+                             className={`w-full py-3 px-4 rounded-xl text-sm font-bold text-left truncate transition-all shadow-sm ${isActive ? 'bg-amber-100 text-amber-900 border border-amber-200' : 'bg-[#1E293B] border border-slate-700 text-slate-300 hover:bg-slate-700'}`}>
+                             {spk.name}
+                           </button>
+                           <div className="flex items-center gap-2 justify-between px-1">
+                             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Qtd. Perguntas IA:</span>
+                             <input 
+                               type="number" 
+                               min="1" max="10" 
+                               value={(eventConfig.speaker_questions && eventConfig.speaker_questions[sess.id]) || eventConfig.max_questions || 3}
+                               onChange={(e) => updateSpeakerQuestions(sess.id, parseInt(e.target.value))}
+                               className="w-12 bg-[#0F172A] border border-slate-700/50 text-[#10B981] text-xs font-bold px-1 py-1 rounded-lg text-center focus:outline-none focus:border-indigo-500"
+                             />
+                           </div>
+                         </div>
+                       </div>
                      </div>
                    );
                  })
@@ -412,61 +569,76 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm">
-               <h3 className="font-semibold text-slate-100 mb-2 flex items-center gap-2 text-[11px]">
-                 <Bot className="w-4 h-4 text-indigo-400" /> Configura Voz IA
+            <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-5 shadow-sm">
+               <h3 className="font-semibold text-slate-100 mb-2 flex flex-col items-center justify-center text-center gap-2 text-sm">
+                 <Settings className="w-5 h-5 text-[#10B981]" /> Configurar Voz IA
                </h3>
-               <p className="text-[9px] text-slate-500 mb-4">Qtd. de Perguntas para IA e colunas</p>
-               <div className="flex items-center gap-2">
+               <p className="text-[10px] text-slate-400 mb-4 text-center leading-tight mt-3">Qtd. de perguntas para IA continuas</p>
+               <div className="flex items-center gap-2 mt-2">
                  <input 
                    type="range" min="1" max="10" step="1" 
                    value={eventConfig.max_questions || 3} 
                    onChange={(e) => updateMaxQuestions(parseInt(e.target.value))}
-                   className="flex-1 accent-indigo-500 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer" 
+                   className="flex-1 accent-indigo-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer" 
                  />
-                 <span className="text-indigo-400 font-bold bg-indigo-500/10 px-2 py-0.5 rounded text-xs">{eventConfig.max_questions || 3}</span>
+                 <span className="text-white font-bold bg-slate-800 rounded-full w-6 h-6 flex items-center justify-center text-xs">{eventConfig.max_questions || 3}</span>
                </div>
             </div>
 
-            <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm flex flex-col justify-between">
-               <h3 className="font-semibold text-slate-100 flex items-center gap-2 text-[11px]">
-                 <Bot className="w-4 h-4 text-indigo-400" /> Configura Voz IA
+            <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-5 shadow-sm flex flex-col">
+               <h3 className="font-semibold text-slate-100 flex flex-col items-center justify-center text-center gap-2 text-sm mb-3">
+                 <Settings className="w-5 h-5 text-[#10B981]" /> Configurar Voz IA
                </h3>
-               <select className="w-full bg-slate-800/50 border border-slate-700/50 text-slate-200 font-medium rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500">
-                 <option>Nova (Feminina)</option>
-                 <option>Onyx (Masculina)</option>
-                 <option>Shimmer (Feminina)</option>
-               </select>
+               <p className="text-[10px] text-slate-400 text-center leading-tight mb-4 flex-1">Tom de voz da IA</p>
+               <div className="flex gap-2">
+                   <select className="flex-1 bg-slate-900 border border-slate-700 text-indigo-400 font-medium rounded-xl px-2 py-1.5 text-xs focus:outline-none shadow-inner text-center">
+                     <option>Natural</option>
+                     <option>Formal</option>
+                     <option>Casual</option>
+                   </select>
+                   <div className="w-8 flex items-center justify-center text-slate-400"><Mic className="w-4 h-4"/></div>
+               </div>
             </div>
           </div>
-
-          <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-4 shadow-sm text-xs text-slate-400 flex justify-between items-center cursor-pointer hover:text-slate-200 transition-colors">
-             <span className="flex items-center gap-2"><Settings className="w-4 h-4" /> Configuração Avançada da Voz</span> <ArrowLeft className="w-4 h-4 rotate-180" />
-          </div>
+          
+          <button className="w-full mt-2 bg-slate-800/80 text-slate-300 hover:text-white p-4 rounded-2xl flex items-center justify-between transition-all shadow-sm">
+             <div className="flex items-center gap-2">
+                 <Settings className="w-4 h-4" />
+                 <span className="text-xs font-bold">Configuração Avançada da Voz</span>
+             </div>
+             <ChevronDown className="w-4 h-4 -rotate-90" />
+          </button>
         </div>
 
-        {/* COLUNA 2: GESTÃO DA PALESTRA E FILA */}
-        <div className="space-y-4 flex flex-col h-full">
-          <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm flex flex-col relative overflow-hidden flex-1 min-h-[300px]">
-            <div className="absolute top-0 right-0 p-4 opacity-[0.03] pointer-events-none"><Activity className="w-40 h-40" /></div>
+        {/* COLUNA 2: GESTÃO DA PALESTRA E IA */}
+        <div className="space-y-4 flex flex-col h-full col-span-1">
+          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col relative overflow-hidden flex-1">
+            <div className="absolute top-0 right-0 p-4 opacity-[0.02] pointer-events-none"><Activity className="w-40 h-40" /></div>
             
             <h3 className="font-semibold text-slate-100 mb-6 flex items-center gap-2 relative z-10">
-              <Mic className="w-5 h-5 text-indigo-400" /> Gestão da Palestra
+              <Mic className="w-5 h-5 text-[#10B981]" /> Gestão da Palestra
             </h3>
             
-            <div className="mb-6 relative z-10">
-               <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">1. Fase do Evento</h4>
+            <div className="mb-8 relative z-10">
+               <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">1. Fase do Evento</h4>
                
                <button 
                  onClick={toggleEventOpen}
-                 className={`w-full font-bold py-2.5 rounded-xl mb-3 text-sm shadow-sm transition-colors border ${
+                 className={`w-full font-bold py-3.5 rounded-2xl mb-4 text-sm shadow-sm transition-colors border ${
                    !eventConfig?.is_event_open 
-                     ? "bg-amber-500/20 text-amber-500 border-amber-500/50 hover:bg-amber-500/30" 
-                     : "bg-emerald-500/20 text-emerald-400 border-emerald-500/50 hover:bg-emerald-500/30"
+                     ? "bg-amber-500/10 text-[#F59E0B] border-amber-500/30 hover:bg-amber-500/20" 
+                     : "bg-[#10B981]/10 text-[#10B981] border-[#10B981]/30 hover:bg-[#10B981]/20"
                  }`}
                >
-                 {!eventConfig?.is_event_open ? '🛑 Sala de Espera Ativa (Evento Fechado)' : '✅ Evento Aberto (Recebendo Perguntas)'}
+                 {!eventConfig?.is_event_open ? '🛑 Sala de Espera (Evento Fechado)' : '✅ Evento Aberto (Recebendo Perguntas +)'}
                </button>
+
+               <div className="flex items-center justify-between mb-4 mt-2">
+                 <span className="text-sm text-slate-300">Nº de Perguntas por Bloco:</span>
+                 <div className="bg-[#0F172A] border border-slate-700 rounded-lg px-4 py-1.5 text-[#10B981] font-bold text-sm">
+                    5
+                 </div>
+               </div>
 
                <div className="grid grid-cols-4 gap-2">
                  {["Abertura", "Intervalo", "Q&A", "Fim"].map((phase) => {
@@ -474,8 +646,9 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                    return (
                      <button 
                        key={phase} onClick={() => updatePhase(phase)}
-                       className={`py-2 rounded-xl text-xs font-bold transition-all ${
-                         isActive ? "bg-indigo-600 text-white shadow-sm" : "bg-white text-slate-900 shadow-sm hover:bg-slate-50"
+                       className={`py-3 rounded-xl text-xs font-bold transition-all shadow-sm ${
+                         isActive && phase === "Q&A" ? "bg-emerald-600 text-white shadow-emerald-500/20" : 
+                         isActive ? "bg-slate-700 text-white" : "bg-slate-800/80 text-slate-400 hover:bg-slate-700 border border-slate-700/50"
                        }`}
                      >
                        {phase}
@@ -485,212 +658,230 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                </div>
             </div>
 
-            <div className="flex-1 space-y-3 relative z-10">
-               <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">2. Comandos de Áudio da IA</h4>
+            <div className="mb-8 relative z-10">
+               <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">2. Comandos de Áudio da IA</h4>
                
-               <button onClick={toggleAiMode} className={`w-full p-2 rounded-xl text-xs font-bold transition-all mb-3 border shadow-sm ${eventConfig?.ai_mode === 'auto' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>
-                 Modo de Q&A: {eventConfig?.ai_mode === 'auto' ? 'Automático (Voz + Manual)' : 'Manual (Apenas Painel)'}
+               <button onClick={toggleAiMode} className={`w-full p-4 rounded-2xl text-sm font-bold transition-all mb-4 shadow-sm border ${eventConfig?.ai_mode === 'auto' ? 'bg-[#10B981] text-white border-emerald-400/30' : 'bg-slate-800/50 text-slate-400 border-slate-700/50 hover:bg-slate-800'}`}>
+                 <div className="flex items-center justify-center gap-2">
+                    Modo de Q&A {eventConfig?.ai_mode === 'auto' ? 'Automático' : 'Manual'} (Voz + Manual) 
+                 </div>
                </button>
 
-               <button disabled={isProcessing} onClick={triggerIntroQA} className="w-full bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 p-3 rounded-xl flex items-center justify-center gap-3 transition-all shadow-sm disabled:opacity-50">
-                 <PlayCircle className="w-5 h-5 text-indigo-600" />
-                 <span className="font-bold">{isProcessing ? "A processar..." : "Iniciar Bloco Q&A"}</span>
+               <button disabled={isProcessing} onClick={triggerIntroQA} className="w-full bg-white text-slate-900 hover:bg-slate-200 p-4 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-sm disabled:opacity-50 mb-3">
+                 <PlayCircle className="w-5 h-5 text-slate-900" />
+                 <span className="font-bold text-sm">{isProcessing ? "A processar..." : "Iniciar Bloco Q&A"}</span>
                </button>
 
-               <button onClick={triggerNextQuestion} className="w-full bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 p-3 rounded-xl flex items-center justify-center gap-3 transition-all shadow-sm">
-                 <FastForward className="w-5 h-5 text-emerald-600" />
-                 <span className="font-bold">Próxima Pergunta IA</span>
+               <button onClick={triggerNextQuestion} className="w-full bg-white text-slate-900 hover:bg-slate-200 p-4 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-sm mb-4">
+                 <FastForward className="w-5 h-5 text-slate-900" />
+                 <span className="font-bold text-sm">Próxima Pergunta IA</span>
                </button>
 
-               <div className="grid grid-cols-2 gap-3">
-                 <button onClick={pauseAudio} className="bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 p-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm">
-                   <Pause className="w-4 h-4 text-amber-500" />
-                   <span className="text-xs font-bold">Pausar Voz</span>
+               <div className="grid grid-cols-2 gap-3 mb-4">
+                 <button onClick={pauseAudio} className="bg-white text-slate-900 hover:bg-slate-200 p-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm">
+                   <Pause className="w-4 h-4" />
+                   <span className="text-sm font-bold">Pausar Voz</span>
                  </button>
-                 <button onClick={resumeAudio} className="bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 p-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm">
-                   <Play className="w-4 h-4 text-sky-500" />
-                   <span className="text-xs font-bold">Continuar</span>
+                 <button onClick={resumeAudio} className="bg-white text-slate-900 hover:bg-slate-200 p-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm">
+                   <Play className="w-4 h-4" />
+                   <span className="text-sm font-bold">Continuar</span>
                  </button>
                </div>
 
-               <button onClick={killAudio} className="w-full bg-red-500/20 border border-red-500/50 hover:bg-red-500/30 p-3 rounded-xl flex items-center justify-center gap-2 transition-all text-red-200 group mt-4">
-                 <MicOff className="w-4 h-4 group-hover:animate-pulse" />
-                 <span className="font-bold text-xs uppercase tracking-wider">Mutar IA (Stop)</span>
+               <button onClick={killAudio} className="w-full bg-[#EF4444] hover:bg-red-600 p-4 rounded-2xl flex items-center justify-center gap-2 transition-all text-white group mt-5">
+                 <MicOff className="w-5 h-5 group-hover:animate-pulse" />
+                 <span className="font-bold text-sm uppercase tracking-wider">MUTAR IA (STOP)</span>
                </button>
             </div>
 
-            <div className="relative z-10 pt-4 mt-4 border-t border-slate-700/50">
-               <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                 3. Controlo Manual de Slides
+            <div className="relative z-10 pt-4 border-t border-slate-700/30">
+               <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">
+                 3. CONTROLE MANUAL DE SLIDES
                </h4>
-               <button onClick={toggleSliderMode} className={`w-full p-3 mb-3 rounded-xl flex items-center justify-center gap-2 transition-all group border shadow-sm ${eventConfig?.slider_mode_active ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' : 'bg-slate-800/50 border-slate-700/50 text-slate-300 hover:bg-slate-800'}`}>
-                 <span className="font-bold text-xs uppercase tracking-wider">
-                   {eventConfig?.slider_mode_active ? 'Modo Slider: ATIVO' : 'Ativar Modo Slider'}
+               <button onClick={toggleSliderMode} className={`w-full p-4 mb-3 rounded-2xl flex items-center justify-center gap-2 transition-all group border shadow-sm ${eventConfig?.slider_mode_active ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700'}`}>
+                 <span className="font-bold text-sm uppercase tracking-wider">
+                   {eventConfig?.slider_mode_active ? 'MODO SLIDER ATIVO' : 'ATIVAR MODO SLIDER'}
                  </span>
                </button>
                <div className="grid grid-cols-2 gap-3">
-                 <button onClick={() => changeSlideIndex(false)} className="bg-slate-800/50 border border-slate-700/50 text-slate-300 hover:bg-slate-700 hover:text-white p-2 rounded-xl text-xs font-bold uppercase transition-colors">&larr; Slide Anterior</button>
-                 <button onClick={() => changeSlideIndex(true)} className="bg-slate-800/50 border border-slate-700/50 text-slate-300 hover:bg-slate-700 hover:text-white p-2 rounded-xl text-xs font-bold uppercase transition-colors">Próximo Slide &rarr;</button>
+                 <button onClick={() => changeSlideIndex(false)} className="bg-slate-900/80 border border-slate-700 text-slate-400 hover:text-white p-3.5 rounded-xl text-xs font-bold uppercase transition-colors">&larr; SLIDE ANTERIOR</button>
+                 <button onClick={() => changeSlideIndex(true)} className="bg-slate-900/80 border border-slate-700 text-slate-400 hover:text-white p-3.5 rounded-xl text-xs font-bold uppercase transition-colors">PRÓXIMO SLIDE &rarr;</button>
+               </div>
+            </div>
+            
+            <div className="mt-8 pt-6 border-t border-slate-700/30 flex items-center justify-between group">
+               <div>
+                  <div className="flex items-center gap-2 mb-1">
+                     <LinkIcon className="w-4 h-4 text-indigo-400" />
+                     <h4 className="text-sm font-bold text-slate-100">Perguntas ao Orador</h4>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mb-3">Acesso via QR Code</p>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/event/${eventId}/pergunta`);
+                      addLog("Link copiado!");
+                    }}
+                    className="bg-slate-200 hover:bg-white text-slate-900 font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm text-xs"
+                  >
+                     Copiar Link para Sala
+                  </button>
+               </div>
+               <div className="bg-white p-2 rounded-xl shadow-sm group-hover:scale-105 transition-transform">
+                  {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/pergunta`} size={56} />}
                </div>
             </div>
           </div>
 
-          <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm flex items-center justify-between">
-             <div>
-                <div className="flex items-center gap-2 mb-1">
-                   <LinkIcon className="w-4 h-4 text-slate-400" />
-                   <h4 className="text-sm font-semibold text-slate-100">Perguntas ao Orador</h4>
-                </div>
-                <p className="text-xs text-slate-500">Acesso via QR Code</p>
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}/event/${eventId}/pergunta`);
-                    addLog("Link da Sala copiado para a área de transferência!");
-                    alert("Link copiado!");
-                  }}
-                  className="mt-3 text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/50 border border-slate-700/50 px-3 py-1.5 rounded-lg transition-colors"
-                >
-                   Copiar Link para Sala
-                </button>
-             </div>
-             <div className="bg-white p-2 rounded-xl shadow-sm">
-                {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/pergunta`} size={40} />}
-             </div>
-          </div>
         </div>
 
-        {/* COLUNA 3: FILA ATIVA, LOGS E TELEPROMPTER */}
-        <div className="space-y-4 flex flex-col h-full">
-          <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm flex flex-col h-[250px]">
-            <h3 className="font-semibold text-slate-100 mb-3 flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-emerald-400" /> Fila em Palco
-            </h3>
-            <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 bg-slate-900/50 rounded-xl border border-slate-700/50 p-2">
-              {activeQueue.length === 0 ? (
-                <div className="text-xs text-slate-500 h-full flex items-center justify-center text-center">
-                  Fila vazia. Aprove no Curador.
-                </div>
-              ) : (
-                activeQueue.map((q) => (
-                  <div key={q.id} className={`p-2 mb-2 rounded-xl border flex flex-col gap-1 ${q.status === 'active' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-800/80 border-slate-700/50'}`}>
-                    <div className="flex justify-between items-center">
-                      <span className={`text-[10px] font-bold ${q.status === 'active' ? 'text-emerald-400' : 'text-slate-300'}`}>{q.author_name}</span>
-                      {q.status === 'active' && <span className="flex items-center gap-1 text-[8px] text-emerald-400 uppercase bg-emerald-500/20 px-1.5 py-0.5 rounded-full"><Radio className="w-2 h-2"/> Active</span>}
-                    </div>
-                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-tight">{q.content}</p>
+        {/* COLUNA 3: DIREITA LARGA COM 2 COLUNAS INTERNAS */}
+        <div className="col-span-1 lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
+          
+          {/* Subcoluna Esquerda: Fila, Logs, Alerta */}
+          <div className="space-y-4 flex flex-col h-full">
+            <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col h-[340px]">
+              <h3 className="font-semibold text-slate-100 mb-4 flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-emerald-400" /> Fila em Palco
+              </h3>
+              <div className="flex-1 overflow-y-auto pr-3 space-y-3 scrollbar-thin scrollbar-thumb-slate-700">
+                {activeQueue.length === 0 ? (
+                  <div className="text-xs text-slate-500 h-full flex items-center justify-center text-center font-medium italic bg-[#0F172A] rounded-xl border border-slate-800">
+                    Fila vazia.
                   </div>
-                ))
+                ) : (
+                  <>
+                    {activeQueue.slice(0, 2).map((q) => (
+                      <div key={q.id} className="p-4 rounded-2xl border bg-[#1E293B] border-slate-700 flex flex-col gap-1 shadow-sm">
+                        <span className="text-sm font-bold text-slate-200">{q.author_name}</span>
+                        <p className="text-xs text-slate-400 truncate leading-relaxed">{q.content}</p>
+                      </div>
+                    ))}
+                  {activeQueue.length > 2 && (
+                    <div className="p-3 rounded-xl border bg-slate-800/30 border-slate-700/50 flex justify-center text-xs font-bold text-slate-500">
+                       + {activeQueue.length - 2} Adicional
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
 
-          <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm flex flex-col flex-1 min-h-[200px]">
-            <h3 className="font-semibold text-slate-100 mb-3 flex items-center gap-2">
-              <TerminalSquare className="w-4 h-4 text-slate-500" /> System Logs
+          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col flex-1 min-h-[260px]">
+            <h3 className="font-semibold text-slate-100 mb-4 flex items-center gap-2">
+              <TerminalSquare className="w-5 h-5 text-slate-400" /> System Logs
             </h3>
-            <div className="flex-1 bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 overflow-y-auto space-y-2 text-[10px] font-mono scrollbar-thin scrollbar-thumb-slate-700">
+            <div className="flex-1 bg-[#090E17] border border-slate-800 rounded-2xl p-4 overflow-y-auto space-y-3 text-[11px] font-mono scrollbar-thin scrollbar-thumb-slate-700 shadow-inner">
               {logs.map((log, i) => (
-                <div key={i} className="flex flex-col gap-0.5 border-l-2 border-slate-700 pl-2 py-0.5">
-                  <span className="text-slate-600">[{log.time}]</span>
+                <div key={i} className="flex flex-col gap-0.5">
+                  <span className="text-slate-600 font-bold">[{log.time}]</span>
                   <span className={
-                    log.msg.includes("EMERGÊNCIA") ? "text-red-400" :
-                    log.msg.includes("Comando") ? "text-indigo-400" : 
+                    log.msg.includes("EMERGÊNCIA") ? "text-red-400 font-semibold" :
                     "text-emerald-400"
                   }>
                     {log.msg}
                   </span>
                 </div>
               ))}
-              <div className="animate-pulse flex gap-2 text-emerald-500/50 pt-1">
-                 <TerminalSquare className="w-3 h-3" /> <span>Idle...</span>
-              </div>
             </div>
+            <button className="mt-4 flex justify-center items-center gap-2 text-slate-400 hover:text-slate-200 text-xs font-bold transition-colors">
+               Ver todos os logs <ChevronDown className="w-4 h-4 -rotate-90"/>
+            </button>
           </div>
 
-          <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm">
-            <h4 className="text-[11px] text-slate-100 mb-2 font-medium">Alerta de Teleprompter (Emergência)</h4>
-            <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-2 relative">
-               <textarea 
-                  rows={2} 
-                  value={teleprompterMsg}
-                  onChange={(e) => setTeleprompterMsg(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      sendTeleprompterAlert();
-                    }
-                  }}
-                  className="w-full bg-transparent text-slate-200 text-xs resize-none focus:outline-none placeholder-slate-600" 
-                  placeholder="Mensagem rápida (Enter para enviar)"
-               />
-               <div className="flex justify-end mt-2">
-                 <button onClick={sendTeleprompterAlert} className="bg-white hover:bg-slate-200 text-slate-900 text-xs font-bold px-4 py-1.5 rounded-lg transition-colors shadow-sm">
-                   Enviar Alerta
-                 </button>
-               </div>
-            </div>
+          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm">
+             <h4 className="text-[13px] text-slate-300 mb-3 font-semibold flex items-center gap-2">
+               <AlertCircle className="w-4 h-4 text-slate-400" /> Alerta de Teleprompter (Emergência)
+             </h4>
+             <div className="bg-[#111827] border border-slate-800 rounded-2xl p-4 relative shadow-inner h-28">
+                <textarea 
+                   rows={2} 
+                   value={teleprompterMsg}
+                   onChange={(e) => setTeleprompterMsg(e.target.value)}
+                   onKeyDown={(e) => {
+                     if (e.key === 'Enter' && !e.shiftKey) {
+                       e.preventDefault();
+                       sendTeleprompterAlert();
+                     }
+                   }}
+                   className="w-full bg-transparent text-slate-200 text-sm resize-none focus:outline-none placeholder-slate-600 font-medium h-full" 
+                   placeholder="Mensagem rápida (Enter para enviar)"
+                />
+                <div className="absolute bottom-3 right-3">
+                  <button onClick={sendTeleprompterAlert} className="bg-amber-700/20 text-amber-500 hover:bg-amber-700/40 text-xs font-bold px-4 py-2 rounded-xl transition-colors shadow-sm flex items-center gap-2 border border-amber-500/30">
+                    Enviar Alerta <Play className="w-3 h-3" />
+                  </button>
+                </div>
+             </div>
           </div>
+
         </div>
 
-        {/* COLUNA 4: ESTATÍSTICAS E MENSAGENS IA */}
+        {/* Subcoluna Direita: Monitorização, Mensagens IA, Preview */}
         <div className="space-y-4 flex flex-col h-full">
-           {/* Monitorização (Novo Bloco) */}
-           <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm">
-              <h3 className="font-semibold text-slate-100 mb-4 flex items-center gap-2 text-sm">
-                <Activity className="w-4 h-4 text-emerald-400" /> Monitorização
+           {/* Monitorização */}
+           <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm">
+              <h3 className="font-semibold text-slate-100 mb-6 flex items-center gap-2 text-sm">
+                <Activity className="w-5 h-5 text-emerald-400" /> Monitorização
               </h3>
-              <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="grid grid-cols-2 gap-4 mb-6">
                 <div>
-                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Active Users</p>
-                  <p className="text-2xl font-black text-white flex items-center gap-2">
-                    15 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">ACTIVE USERS</p>
+                  <p className="text-4xl font-light text-white leading-none">
+                    {activeUsersCount}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Q&A Velocity</p>
-                  <p className="text-2xl font-black text-emerald-400">8.4s</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Q&A VELOCITY</p>
+                  <p className="text-4xl font-light text-emerald-400 leading-none">8.4s</p>
                 </div>
               </div>
-              <div className="border-t border-slate-700/50 pt-3">
-                <div className="flex justify-between items-center text-xs">
+              <div className="pt-2">
+                <div className="flex justify-between items-center text-[10px] mb-2 uppercase tracking-wider font-bold">
                   <span className="text-slate-400">System Health</span>
-                  <span className="text-emerald-400 font-bold">99%</span>
+                  <span className="text-emerald-400">99%</span>
                 </div>
-                <div className="w-full bg-slate-800 rounded-full h-1.5 mt-1.5">
-                  <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: '99%' }}></div>
+                <div className="w-full bg-[#0F172A] rounded-full h-2">
+                  <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '99%' }}></div>
                 </div>
               </div>
            </div>
 
-           <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-5 shadow-sm">
-             <h3 className="font-semibold text-slate-100 mb-4 text-sm">Mensagens da IA</h3>
-             
-             <div className="space-y-2">
-                {["Abertura", "Apresentação Equipa", "Cordenadores", "Encerramento"].map((macro) => {
-                  const isActiveMacro = eventConfig?.macro_state === macro;
-                  return (
-                    <button 
-                      key={macro} 
-                      onClick={() => updateMacroState(macro)}
-                      className={`w-full hover:opacity-90 font-bold py-2 px-4 rounded-xl text-sm text-center transition-all shadow-sm border ${isActiveMacro ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-300' : 'bg-slate-800/50 border-slate-700/50 text-slate-300'}`}
-                    >
-                      {macro}
-                    </button>
-                  );
-                })}
-             </div>
+           <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm">
+              <h3 className="font-semibold text-slate-100 mb-5 text-sm flex items-center gap-2"><Bot className="w-5 h-5 text-slate-400" /> Mensagens da IA</h3>
+              <div className="space-y-3">
+                 {["Abertura", "Apresentação Equipa", "Cordenadores", "Encerramento"].map((macro) => {
+                   const isActiveMacro = eventConfig?.macro_state === macro;
+                   return (
+                     <button 
+                       key={macro} 
+                       onClick={() => updateMacroState(macro)}
+                       className={`w-full hover:opacity-90 font-bold py-3.5 px-4 rounded-xl text-xs flex items-center gap-3 transition-all shadow-sm border ${isActiveMacro ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-[#1E293B] border-slate-700 text-slate-300 hover:bg-slate-700'}`}
+                     >
+                       <User className="w-4 h-4 opacity-50" />
+                       {macro}
+                     </button>
+                   );
+                 })}
+              </div>
            </div>
 
-           <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl shadow-sm flex-1 overflow-hidden relative group cursor-pointer flex items-center justify-center min-h-[150px]">
-              <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/10 to-emerald-500/10"></div>
-              <div className="relative z-10 text-center">
-                 <MonitorPlay className="w-8 h-8 text-slate-500 mx-auto mb-2 group-hover:scale-110 transition-transform" />
-                 <span className="text-slate-400 text-xs font-semibold uppercase tracking-widest">Preview Palco</span>
+           <div className="bg-gradient-to-b from-indigo-900/40 to-[#0F172A] border border-slate-700/30 rounded-3xl p-6 shadow-sm flex flex-col items-center justify-center min-h-[220px]">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 flex items-center justify-center mb-4">
+                 <MonitorPlay className="w-8 h-8 text-indigo-400" />
               </div>
+              <h4 className="text-sm font-bold text-slate-300 mb-6 uppercase tracking-wider">PREVIEW PALCO</h4>
+              
+              <button 
+                onClick={() => window.open(`/event/${eventId}/live`, '_blank')}
+                className="w-full bg-[#10B981]/10 hover:bg-[#10B981]/20 border border-[#10B981]/30 text-[#10B981] text-xs font-bold py-3.5 rounded-xl transition-all shadow-sm flex justify-center items-center gap-2"
+              >
+                 Abrir Preview <ExternalLink className="w-3.5 h-3.5" />
+              </button>
            </div>
         </div>
 
       </div>
+    </div>
     </div>
   );
 }
