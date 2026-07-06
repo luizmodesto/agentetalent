@@ -169,7 +169,12 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     const newState = !eventConfig?.is_event_open;
     const newConfig = { ...eventConfig, is_event_open: newState, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
-    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    const { error } = await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    if (error) {
+      alert("Erro ao atualizar o evento: " + error.message);
+      addLog("ERRO: Falha ao abrir/fechar evento: " + error.message);
+      return;
+    }
     addLog(`Evento ${newState ? 'ABERTO' : 'FECHADO'} para o Público.`);
     
     if (!newState) {
