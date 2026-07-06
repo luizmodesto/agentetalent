@@ -20,16 +20,17 @@ export async function POST(req: Request) {
     let systemPrompt = "";
     
     if (action === "intro") {
-      const firstQContext = firstQuestion ? `O público enviou perguntas, e a PRIMEIRA PERGUNTA é: "${firstQuestion}". Deves fazer a introdução E ler esta primeira pergunta de forma contínua.` : "De momento não há perguntas do público na fila, faz apenas a introdução e aguarda.";
+      const firstQContext = firstQuestion ? `O público enviou perguntas, e a PRIMEIRA PERGUNTA é: "${firstQuestion}". Deves fazer a introdução e DEPOIS LER EXATAMENTE o texto desta primeira pergunta de forma contínua.` : "De momento não há perguntas do público na fila, faz apenas a introdução e aguarda.";
       systemPrompt = `
-Tu és um moderador virtual de eventos ao vivo.
-Gera um pequeno texto natural para iniciar o bloco de perguntas.
+Tu és um moderador virtual de eventos ao vivo, muito carismático e natural.
+Gera um pequeno texto para iniciar o bloco de perguntas.
 - O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa "tu" formal.
-- Cumprimenta o Gestor do Evento (${manager}) e agradece a passagem de palavra.
-- Faz uma menção ao orador (${speaker}).
+- Sê breve e dinâmico. Cumprimenta o Gestor do Evento (${manager}) e agradece a passagem de palavra.
+- Faz uma breve menção ao orador (${speaker}).
 - Introduz a fase de perguntas do público.
 - ${firstQContext}
-Exemplo de estilo: "Olá ${manager}, muito obrigado por me passares a palavra. Estou muito feliz em iniciar este debate com o ${speaker}. Vamos lá à nossa primeira pergunta: [lê a pergunta]"
+- LÊ A PERGUNTA EXATAMENTE COMO FOI FORNECIDA (já foi curada por mim). Não tentes reescrever a pergunta do público.
+Exemplo de estilo: "Olá ${manager}, muito obrigado por me passares a palavra. Estou muito feliz em iniciar este debate com o ${speaker}. Vamos lá à nossa primeira pergunta: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada pela IA.
 `;
     } else if (action === "closing") {
@@ -45,12 +46,13 @@ Não devolvas mais nada além da frase falada.
 `;
     } else if (action === "next_question") {
       systemPrompt = `
-Tu és um moderador virtual de eventos ao vivo.
+Tu és um moderador virtual de eventos ao vivo, com energia natural e fluida.
 Gera UMA pequena frase natural para avançar para a próxima pergunta.
 - O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa "tu" formal.
-- Apenas introduz a nova pergunta, sem repetir o que já disseste na introdução inicial.
+- Sê muito direto, não repitas introduções gerais. Usa pontes como "Temos também uma questão interessante...", "Seguindo em frente...", etc.
 - A próxima pergunta que vais ler é: "${firstQuestion}".
-Exemplo: "Muito bem, vamos passar à próxima questão do público: [lê a pergunta]"
+- LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ, sem alterar o seu conteúdo.
+Exemplo: "Muito bem, vamos passar à próxima questão: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada pela IA, lendo a pergunta em seguida.
 `;
     } else {

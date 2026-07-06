@@ -70,6 +70,36 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
     setLogs(prev => [...prev, { time, msg }]);
   };
 
+  const triggerAIProcessing = async () => {
+    if (!activeSession || !speaker) {
+      addLog("ERRO: Sessão ou Orador não encontrados para Curadoria.");
+      return;
+    }
+    setIsProcessing(true);
+    addLog("A preparar perguntas em background (Curadoria IA)...");
+    try {
+      const res = await fetch('/api/ai/qa-curation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: activeSession.id,
+          maxPerguntas: maxPerguntas,
+          speakerName: speaker.name,
+          theme: speaker.bio
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+         addLog(`Curadoria Concluída: ${data.processed} processadas, ${data.approved} aprovadas.`);
+      } else {
+         addLog("ERRO na Curadoria IA.");
+      }
+    } catch (e) {
+      addLog("ERRO de rede na Curadoria IA.");
+    }
+    setIsProcessing(false);
+  };
+
   const toggleEventOpen = async () => {
     try {
       const { createClient } = await import('@supabase/supabase-js');
@@ -85,6 +115,10 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
       await supabase.from('events').update({ personality: JSON.stringify(config) }).eq('id', eventId);
       setIsEventOpen(newState);
       addLog(`Sala de Q&A (Público) ${newState ? 'ABERTA' : 'FECHADA'}`);
+      
+      if (!newState) {
+        triggerAIProcessing();
+      }
     } catch (e) {
       addLog("ERRO ao alterar estado da sala.");
     }
@@ -104,64 +138,86 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
         }
 
         setIsProcessing(true);
-        addLog("A processar perguntas via OpenAI...");
+        addLog("A iniciar Q&A via OpenAI...");
 
-        // Call our API
+        const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
+        const firstQuestion = (qs && qs.length > 0) ? qs[0].content : undefined;
+
         const res = await fetch('/api/ai/qa-moderation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sessionId: activeSession.id,
-            maxPerguntas: maxPerguntas,
+            managerName: "Gestor",
             speakerName: speaker.name,
-            theme: speaker.bio
+            action: "intro",
+            firstQuestion: firstQuestion
           })
         });
 
         const data = await res.json();
         setIsProcessing(false);
 
-        if (data.success) {
-           addLog(`IA Processou ${data.processed} perguntas: ${data.approved} aprovadas, ${data.rejected} rejeitadas.`);
-           if (data.closing_remark) {
-             setClosingRemark(data.closing_remark);
-           }
-           // Trigger AI Introduction
-           const introText = `Muito bem. Recebi várias perguntas fantásticas do público. Vamos começar.`;
+        if (data.success && data.text) {
+           addLog(`IA Introdução gerada com sucesso.`);
            await supabase.from('events').update({
-             personality: JSON.stringify({ ai_force_speak: { text: introText, time: Date.now() }, target_screen_id: 'ALL' })
+             personality: JSON.stringify({ ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL' })
            }).eq('id', eventId);
-           addLog("Teleprompter: Introdução do Q&A enviada.");
+           addLog("Teleprompter: Introdução enviada.");
+           
+           if (qs && qs.length > 0) {
+             await supabase.from('questions').update({ status: 'answered' }).eq('id', qs[0].id);
+           }
         } else {
            addLog("ERRO no processamento de IA.");
         }
       }
 
       if (cmd === "Próxima pergunta") {
-        // Find next approved question that hasn't been read
+        setIsProcessing(true);
         const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
         
         if (qs && qs.length > 0) {
            const nextQ = qs[0];
            
-           // If it's the last question, append closing
-           let speech = nextQ.content;
-           if (qs.length === 1) {
-             speech += " " + (closingRemark || "Muito obrigado pelas tuas respostas. Foi um prazer contar contigo.");
-           }
+           const res = await fetch('/api/ai/qa-moderation', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+               managerName: "Gestor",
+               speakerName: speaker.name,
+               action: "next_question",
+               firstQuestion: nextQ.content
+             })
+           });
 
-           // Send to teleprompter
-           await supabase.from('events').update({
-             personality: JSON.stringify({ ai_force_speak: { text: speech, time: Date.now() }, target_screen_id: 'ALL' })
-           }).eq('id', eventId);
-           
-           addLog(`Pergunta ativada: "${nextQ.content.substring(0, 30)}..."`);
-           
-           // Mark as answered
-           await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
+           const data = await res.json();
+
+           if (data.success && data.text) {
+             await supabase.from('events').update({
+               personality: JSON.stringify({ ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL' })
+             }).eq('id', eventId);
+             addLog(`Próxima Pergunta ativada.`);
+             await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
+           }
         } else {
-           addLog("Aviso: Não há mais perguntas aprovadas na fila.");
+           const res = await fetch('/api/ai/qa-moderation', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+               managerName: "Gestor",
+               speakerName: speaker.name,
+               action: "closing"
+             })
+           });
+           const data = await res.json();
+           if (data.success && data.text) {
+             await supabase.from('events').update({
+               personality: JSON.stringify({ ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL' })
+             }).eq('id', eventId);
+             addLog("Fila vazia. Teleprompter: Encerramento enviado.");
+           }
         }
+        setIsProcessing(false);
       }
     } catch(e) {
       setIsProcessing(false);
@@ -225,14 +281,23 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
               <p className="text-xs text-slate-400">{isProcessing ? "A processar..." : "A IA processa todas as mensagens, seleciona as melhores e abre a sessão."}</p>
             </button>
             
-            <button onClick={() => handleCommand("Próxima pergunta")} className="group bg-slate-800/80 border border-slate-700/50 hover:border-emerald-400/50 p-5 rounded-xl text-left transition-all relative overflow-hidden shadow-sm">
+            <button onClick={() => handleCommand("Próxima pergunta")} className="group bg-slate-800/80 border border-slate-700/50 hover:border-emerald-400/50 p-5 rounded-xl text-left transition-all relative overflow-hidden shadow-sm disabled:opacity-50" disabled={isProcessing}>
               <div className="absolute inset-0 bg-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
               <MessageSquare className="w-6 h-6 text-emerald-400 mb-3" />
               <h4 className="font-bold text-slate-100 mb-1 flex items-center gap-2">
-                Próxima Pergunta 
+                Próxima Pergunta / Encerrar
                 <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">{approvedQuestions.length} fila</span>
               </h4>
-              <p className="text-xs text-slate-400">Chama a próxima pergunta filtrada pela IA. Fecha automaticamente na última.</p>
+              <p className="text-xs text-slate-400">Chama a próxima pergunta da fila, ou a frase de encerramento se vazia.</p>
+            </button>
+            
+            <button onClick={triggerAIProcessing} className="group bg-slate-800/80 border border-slate-700/50 hover:border-amber-400/50 p-5 rounded-xl text-left transition-all relative overflow-hidden shadow-sm disabled:opacity-50" disabled={isProcessing}>
+              <div className="absolute inset-0 bg-amber-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <Activity className="w-6 h-6 text-amber-400 mb-3" />
+              <h4 className="font-bold text-slate-100 mb-1 flex items-center gap-2">
+                Forçar Processamento IA
+              </h4>
+              <p className="text-xs text-slate-400">Curadoria manual. Se enviarem perguntas após fechar a sala, usa isto.</p>
             </button>
           </div>
         </div>
