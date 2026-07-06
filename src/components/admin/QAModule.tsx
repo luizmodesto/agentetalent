@@ -74,11 +74,11 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
     
     // Pegar perguntas pendentes (Inbox)
     const { data: pending } = await supabase.from('questions')
-      .select('*').in('session_id', sessionIds).eq('status', 'pending').order('created_at', { ascending: false });
+      .select('*, session:sessions(speakers(*))').in('session_id', sessionIds).eq('status', 'pending').order('created_at', { ascending: false });
     
     // Pegar perguntas aprovadas (Fila)
     const { data: approved } = await supabase.from('questions')
-      .select('*').in('session_id', sessionIds).eq('status', 'approved').order('created_at', { ascending: true });
+      .select('*, session:sessions(speakers(*))').in('session_id', sessionIds).eq('status', 'approved').order('created_at', { ascending: true });
       
     if (pending) setRawQuestions(pending);
     if (approved) setActiveQueue(approved);
@@ -206,7 +206,14 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
             <div key={q.id} className="bg-[#1a1a1a] border border-neutral-800 rounded-xl p-4 flex flex-col sm:flex-row justify-between gap-4">
               <div className="flex-1">
                 <p className="text-sm text-white mb-2">&quot;{q.content}&quot;</p>
-                <span className="text-xs text-neutral-500">De: {q.author_name}</span>
+                <div className="flex flex-col gap-1">
+        <span className="text-xs text-neutral-500">De: {q.author_name}</span>
+        {q.session?.speakers?.name && (
+        <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded w-max border border-emerald-500/20">
+            Para o orador: {q.session.speakers.name}
+        </span>
+        )}
+    </div>
                 {q.ai_score && <span className="ml-2 text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded">Score IA: {q.ai_score}/10</span>}
                 
                 {fastAssistCache[q.id]?.loading && (
@@ -262,7 +269,14 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
               </div>
               <div>
                 <p className="text-sm text-white mb-2 font-medium">{q.content}</p>
-                <span className="text-xs text-neutral-500">De: {q.author_name}</span>
+                <div className="flex flex-col gap-1">
+        <span className="text-xs text-neutral-500">De: {q.author_name}</span>
+        {q.session?.speakers?.name && (
+        <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded w-max border border-emerald-500/20">
+            Para o orador: {q.session.speakers.name}
+        </span>
+        )}
+    </div>
               </div>
             </div>
           ))}
