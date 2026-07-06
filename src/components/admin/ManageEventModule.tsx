@@ -247,9 +247,10 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     addLog(`Perguntas para orador atualizadas para ${val}.`);
   };
 
-  const triggerAISpeak = async (text: string, questionText: string | null = null) => {
+  const triggerAISpeak = async (text: string, questionText: string | null = null, extraConfig: any = {}) => {
     const newConfig = { 
        ...eventConfig, 
+       ...extraConfig,
        ai_force_speak: { 
          text: text, 
          questionText: questionText,
@@ -308,9 +309,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
        const nextQ = qs[0];
        let speech = nextQ.content;
        
-       const isLastQuestion = ((answeredCount || 0) + 1 >= limit) || (qs.length === 1);
-
-       if (isLastQuestion) {
+      if (isLastQuestion) {
          // Generate last question of the block phrase
          setIsProcessing(true);
          const speakerObj = activeSession.speakers || activeSession.speaker;
@@ -327,14 +326,17 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                aiGender: eventConfig?.tts_config?.gender || 'male'
              })
            });
+           if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
            const data = await res.json();
            if (data.success && data.text) {
               speech = data.text;
            }
-         } catch (e) {
+         } catch (e: any) {
            console.error("Erro a gerar última pergunta:", e);
+           addLog(`ERRO IA Last Q: ${e.message}`);
+         } finally {
+           setIsProcessing(false);
          }
-         setIsProcessing(false);
        } else {
          // Not the last question, generate a brief transition (next_question)
          setIsProcessing(true);
@@ -351,22 +353,20 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                aiGender: eventConfig?.tts_config?.gender || 'male'
              })
            });
+           if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
            const data = await res.json();
            if (data.success && data.text) {
               speech = data.text;
            }
-         } catch (e) {
+         } catch (e: any) {
            console.error("Erro a gerar próxima pergunta:", e);
+           addLog(`ERRO IA Next Q: ${e.message}`);
+         } finally {
+           setIsProcessing(false);
          }
-         setIsProcessing(false);
        }
        
-       await triggerAISpeak(speech, nextQ.content);
-       
-       // Update block count
-       const newConfig = { ...eventConfig, current_block_count: answeredCount + 1 };
-       setEventConfig(newConfig);
-       await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+       await triggerAISpeak(speech, nextQ.content, { current_block_count: answeredCount + 1 });
        
        await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
        addLog(`Pergunta avançada.`);
@@ -435,37 +435,39 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
          firstQuestionId = qs[0].id;
       }
 
-      const res = await fetch('/api/ai/qa-moderation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          managerName: managerName,
-          speakerName: speakerObj?.name || 'Orador',
-          action: 'intro',
-          firstQuestion: firstQuestion,
-          isFirstSpeaker: activeSessionIndex === 0,
-          aiGender: eventConfig?.tts_config?.gender || 'male'
-        })
-      });
+      try {
+        const res = await fetch('/api/ai/qa-moderation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            managerName: managerName,
+            speakerName: speakerObj?.name || 'Orador',
+            action: 'intro',
+            firstQuestion: firstQuestion,
+            isFirstSpeaker: activeSessionIndex === 0,
+            aiGender: eventConfig?.tts_config?.gender || 'male'
+          })
+        });
 
-      const data = await res.json();
-      setIsProcessing(false);
-
-      if (data.success && data.text) {
-         addLog(`Introdução gerada com sucesso!`);
-         await triggerAISpeak(data.text, firstQuestion);
-         
-         const newConfig = { ...eventConfig, current_block_count: firstQuestionId ? 1 : 0 };
-         setEventConfig(newConfig);
-         await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
-         
-         if (firstQuestionId) {
-            await supabase.from('questions').update({ status: 'answered' }).eq('id', firstQuestionId);
-            addLog(`Primeira pergunta ativada na introdução.`);
-            fetchQuestions();
-         }
-      } else {
-         addLog("ERRO no processamento de IA (Intro).");
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        const data = await res.json();
+        
+        if (data.success && data.text) {
+           addLog(`Introdução gerada com sucesso!`);
+           await triggerAISpeak(data.text, firstQuestion, { current_block_count: firstQuestionId ? 1 : 0 });
+           
+           if (firstQuestionId) {
+              await supabase.from('questions').update({ status: 'answered' }).eq('id', firstQuestionId);
+              addLog(`Primeira pergunta ativada na introdução.`);
+              fetchQuestions();
+           }
+        } else {
+           addLog("ERRO no processamento de IA (Intro).");
+        }
+      } catch (err: any) {
+        addLog(`ERRO IA Intro: ${err.message}`);
+      } finally {
+        setIsProcessing(false);
       }
     } catch (e) {
       setIsProcessing(false);
