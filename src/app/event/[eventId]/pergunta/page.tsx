@@ -104,10 +104,16 @@ export default function JoinEventPage({ params }: { params: Promise<{ eventId: s
         }
       }).subscribe();
 
+    // Fallback: poll every 3 seconds to ensure updates happen even if Realtime is disabled
+    const intervalId = setInterval(() => {
+      fetchEventData();
+    }, 3000);
+
     return () => { 
       supabase.removeChannel(sessionChannel);
       supabase.removeChannel(questionsChannel);
       supabase.removeChannel(eventChannel);
+      clearInterval(intervalId);
     };
   }, [eventId, supabase]);
 
