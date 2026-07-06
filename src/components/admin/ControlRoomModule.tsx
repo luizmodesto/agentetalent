@@ -176,8 +176,18 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
         setIsProcessing(true);
         const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
         
+        const { count: answeredCount } = await supabase.from('questions').select('*', { count: 'exact', head: true }).eq('session_id', activeSession.id).eq('status', 'answered');
+        const limit = maxPerguntas || 3;
+        
+        if ((answeredCount || 0) >= limit) {
+           addLog("Limite de perguntas para este bloco atingido.");
+           setIsProcessing(false);
+           return;
+        }
+
         if (qs && qs.length > 0) {
            const nextQ = qs[0];
+           const isLastQuestion = ((answeredCount || 0) + 1 >= limit) || (qs.length === 1);
            
            const res = await fetch('/api/ai/qa-moderation', {
              method: 'POST',
@@ -185,7 +195,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
              body: JSON.stringify({
                managerName: "Gestor",
                speakerName: speaker.name,
-               action: "next_question",
+               action: isLastQuestion ? "last_question" : "next_question",
                firstQuestion: nextQ.content
              })
            });

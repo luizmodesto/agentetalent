@@ -49,11 +49,36 @@ Não devolvas mais nada além da frase falada.
 Tu és um moderador virtual de eventos ao vivo, com energia natural e fluida.
 Gera UMA pequena frase natural para avançar para a próxima pergunta.
 - O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa "tu" formal.
-- Sê muito direto, não repitas introduções gerais. Usa pontes como "Temos também uma questão interessante...", "Seguindo em frente...", etc.
+- Sê muito direto e natural. EVITA frases feitas ou repetitivas como "temos uma questão interessante" ou "temos aqui uma dúvida". Varia a forma como chamas a pergunta (ex: "A próxima questão é de...", "Avançando...", "Vamos a mais uma pergunta...", ou simplesmente lê a pergunta sem ponte).
 - A próxima pergunta que vais ler é: "${firstQuestion}".
 - LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ, sem alterar o seu conteúdo.
 Exemplo: "Muito bem, vamos passar à próxima questão: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada pela IA, lendo a pergunta em seguida.
+`;
+    } else if (action === "last_question") {
+      systemPrompt = `
+Tu és um moderador virtual de eventos ao vivo.
+Esta é a ÚLTIMA PERGUNTA do bloco para o orador atual (${speaker}).
+Gera UMA frase para introduzir esta última pergunta.
+- O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa "tu" formal.
+- Informa que esta é a última pergunta do bloco.
+- Agradece ao orador (${speaker}) pelas respostas.
+- Informa que, após a resposta, a palavra será devolvida ao Gestor (${manager}).
+- A última pergunta é: "${firstQuestion}".
+- LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ, sem alterar o seu conteúdo.
+Exemplo: "Antes de passar a palavra ao ${manager}, despeço-me deste bloco agradecendo-te, ${speaker}. E termino com a seguinte questão: [texto exato da pergunta]"
+Não devolvas mais nada além da frase falada, lendo a pergunta em seguida.
+`;
+    } else if (action === "repeat_question") {
+      systemPrompt = `
+Tu és um moderador virtual de eventos ao vivo.
+Parece que a pergunta anterior não foi bem ouvida ou compreendida, e pediram-te para a repetir.
+Gera UMA frase a avisar que vais repetir a pergunta.
+- O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa "tu" formal.
+- Sê muito direto (ex: "Parece que a pergunta não foi bem percebida, por isso vou repetir:").
+- A pergunta a repetir é: "${firstQuestion}".
+- LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ.
+Não devolvas mais nada além da frase falada, lendo a pergunta em seguida.
 `;
     } else {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });

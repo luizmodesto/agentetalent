@@ -285,6 +285,20 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
       return;
     }
     
+    const { count: answeredCount } = await supabase.from('questions')
+      .select('*', { count: 'exact', head: true })
+      .eq('session_id', activeSession.id)
+      .eq('status', 'answered');
+      
+    const limit = (eventConfig.speaker_questions && eventConfig.speaker_questions[activeSession.id]) || eventConfig.max_questions || 3;
+    const isLimitReached = (answeredCount || 0) >= limit;
+
+    if (isLimitReached) {
+       addLog("Limite de perguntas para este bloco atingido.");
+       alert("O limite de perguntas definido para este orador já foi atingido neste bloco.");
+       return;
+    }
+    
     // Fetch fresh approved questions
     const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
 
@@ -292,12 +306,11 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
        const nextQ = qs[0];
        let speech = nextQ.content;
        
-       if (qs.length === 1) {
-         // Generate transition closing phrase on the fly if it's the last question
+       const isLastQuestion = ((answeredCount || 0) + 1 >= limit) || (qs.length === 1);
+
+       if (isLastQuestion) {
+         // Generate last question of the block phrase
          setIsProcessing(true);
-         const activeSessionIndex = sessionsList.findIndex(s => s.status === 'live');
-         const nextSession = sessionsList[activeSessionIndex + 1];
-         const nextSpeakerName = nextSession ? (nextSession.speakers?.name || nextSession.speaker?.name) : null;
          const speakerObj = activeSession.speakers || activeSession.speaker;
 
          try {
@@ -307,16 +320,16 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
              body: JSON.stringify({
                managerName: managerName,
                speakerName: speakerObj?.name || 'Orador',
-               nextSpeakerName: nextSpeakerName,
-               action: 'closing'
+               action: 'last_question',
+               firstQuestion: speech
              })
            });
            const data = await res.json();
            if (data.success && data.text) {
-              speech += " " + data.text;
+              speech = data.text;
            }
          } catch (e) {
-           console.error("Erro a gerar fecho:", e);
+           console.error("Erro a gerar última pergunta:", e);
          }
          setIsProcessing(false);
        } else {
@@ -355,18 +368,32 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
   };
 
   const repeatCurrentQuestion = async () => {
-    if (eventConfig?.ai_force_speak?.text) {
-      const newConfig = { 
-         ...eventConfig, 
-         ai_force_speak: { 
-           ...eventConfig.ai_force_speak,
-           time: Date.now() 
-         },
-         target_screen_id: pairingId || null 
-      };
-      setEventConfig(newConfig);
-      await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
-      addLog("Comando: Repetir Pergunta enviado!");
+    const questionText = eventConfig?.ai_force_speak?.questionText;
+    if (questionText) {
+      setIsProcessing(true);
+      const activeSession = sessionsList.find(s => s.status === 'live');
+      const speakerObj = activeSession?.speakers || activeSession?.speaker;
+      
+      try {
+        const res = await fetch('/api/ai/qa-moderation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            managerName: managerName,
+            speakerName: speakerObj?.name || 'Orador',
+            action: 'repeat_question',
+            firstQuestion: questionText
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.text) {
+          await triggerAISpeak(data.text, questionText);
+          addLog("Comando: Repetir Pergunta enviado com nova introdução!");
+        }
+      } catch (e) {
+        addLog("Erro ao repetir pergunta.");
+      }
+      setIsProcessing(false);
     } else {
       addLog("Nenhuma pergunta anterior para repetir.");
       alert("Ainda não houve nenhuma fala da IA para repetir.");
