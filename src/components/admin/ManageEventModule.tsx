@@ -302,6 +302,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     const activeSession = sessionsList.find(s => s.status === 'live');
     if (!activeSession) {
       addLog("Nenhuma sessão ativa.");
+      alert("ERRO: Nenhuma sessão ativa no momento. Active um orador primeiro na Sequência de Oradores.");
       return;
     }
     
@@ -370,12 +371,27 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
        fetchQuestions(); // Refresh UI
     } else {
        addLog("Fila vazia: não há perguntas aprovadas na fila.");
+       alert("Fila vazia! Não existem perguntas aprovadas pelo sistema para este orador.");
     }
   };
 
   const repeatCurrentQuestion = async () => {
-    broadcastCommand('repeat_question');
-    addLog("Comando: Repetir Pergunta enviado via Realtime!");
+    if (eventConfig?.ai_force_speak?.text) {
+      const newConfig = { 
+         ...eventConfig, 
+         ai_force_speak: { 
+           ...eventConfig.ai_force_speak,
+           time: Date.now() 
+         },
+         target_screen_id: pairingId || null 
+      };
+      setEventConfig(newConfig);
+      await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+      addLog("Comando: Repetir Pergunta enviado!");
+    } else {
+      addLog("Nenhuma pergunta anterior para repetir.");
+      alert("Ainda não houve nenhuma fala da IA para repetir.");
+    }
   };
 
   const triggerIntroQA = async () => {
