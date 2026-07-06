@@ -690,9 +690,13 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
 
                <div className="flex items-center justify-between mb-4 mt-2">
                  <span className="text-sm text-slate-300">Nº de Perguntas por Bloco:</span>
-                 <div className="bg-[#0F172A] border border-slate-700 rounded-lg px-4 py-1.5 text-[#10B981] font-bold text-sm">
-                    5
-                 </div>
+                 <input 
+                   type="number" 
+                   min="1" max="20"
+                   value={eventConfig.max_questions || 3}
+                   onChange={(e) => updateMaxQuestions(parseInt(e.target.value) || 1)}
+                   className="w-16 bg-[#0F172A] border border-slate-700 rounded-lg px-2 py-1.5 text-[#10B981] font-bold text-sm text-center focus:outline-none focus:border-indigo-500"
+                 />
                </div>
 
                <div className="grid grid-cols-4 gap-2">
