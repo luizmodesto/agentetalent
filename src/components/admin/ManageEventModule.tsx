@@ -308,7 +308,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     if (qs && qs.length > 0) {
        const nextQ = qs[0];
        let speech = nextQ.content;
-       
+       const isLastQuestion = ((answeredCount || 0) + 1 >= limit) || (qs.length === 1);
+
       if (isLastQuestion) {
          // Generate last question of the block phrase
          setIsProcessing(true);
