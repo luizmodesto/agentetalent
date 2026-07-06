@@ -20,7 +20,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   const [aiState, setAiState] = useState<"idle" | "processing" | "speaking" | "paused">("idle");
   const [currentText, setCurrentText] = useState("A aguardar interação...");
   const [persistentText, setPersistentText] = useState("");
-  const [displayedText, setDisplayedText] = useState("");
+  const [currentWordIndex, setCurrentWordIndex] = useState(-1);
   const [isEventOpen, setIsEventOpen] = useState(false);
   const [currentPhase, setCurrentPhase] = useState("Abertura");
   const [aiMode, setAiMode] = useState("auto");
@@ -297,28 +297,26 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
     }
   };
 
-  // Teleprompter Typewriter Effect
+  // Teleprompter Karaoke Effect
   useEffect(() => {
     if (aiState === "speaking") {
-      const activeText = persistentText || currentText;
+      const activeText = currentText;
       const words = activeText.split(" ");
-      let currentIndex = 0;
-      setDisplayedText("");
+      setCurrentWordIndex(0);
       
       const delayPerWord = 400 / rate; 
       
       const interval = setInterval(() => {
-        if (currentIndex < words.length) {
-          setDisplayedText(prev => prev + (prev ? " " : "") + words[currentIndex]);
-          currentIndex++;
-        } else {
+        setCurrentWordIndex(prev => {
+          if (prev < words.length - 1) return prev + 1;
           clearInterval(interval);
-        }
+          return prev;
+        });
       }, delayPerWord);
       
       return () => clearInterval(interval);
     } else {
-      setDisplayedText(currentText);
+      setCurrentWordIndex(-1);
     }
   }, [currentText, aiState, rate]);
 
@@ -546,20 +544,41 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
       {/* CENTER ROW */}
       <div className="flex-1 flex gap-6 overflow-hidden">
         
-        {/* LEGENDA IA */}
-        <div className="flex-[3] bg-slate-900/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl p-12 flex items-center justify-center relative overflow-hidden shadow-2xl">
+        {/* LEGENDA IA E PERGUNTA */}
+        <div className="flex-[3] bg-slate-900/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl p-8 flex flex-col items-center justify-center relative overflow-hidden shadow-2xl">
           <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-purple-500/5"></div>
           
-          <div className="relative z-10 w-full text-center">
+          <div className="relative z-10 w-full flex-1 flex flex-col items-center justify-center text-center">
              {aiState === "idle" && currentText === "A aguardar interação..." && (
                 <div className="text-slate-500 text-3xl font-light mb-4">
                    Aguardando perguntas...
                 </div>
              )}
-             <p className={`${(persistentText || currentText).length > 250 ? 'text-2xl lg:text-3xl' : (persistentText || currentText).length > 150 ? 'text-3xl lg:text-4xl' : (persistentText || currentText).length > 80 ? 'text-4xl lg:text-5xl' : 'text-5xl lg:text-6xl'} font-black leading-tight tracking-tight transition-all duration-500 ${aiState === "speaking" ? "text-white" : "text-slate-400"}`}>
-               {aiState === "speaking" ? displayedText : (persistentText || currentText)}
+             
+             {/* THE MAIN ASSEMBLED QUESTION */}
+             <p className={`${(persistentText || currentText).length > 250 ? 'text-2xl lg:text-3xl' : (persistentText || currentText).length > 150 ? 'text-3xl lg:text-4xl' : (persistentText || currentText).length > 80 ? 'text-4xl lg:text-5xl' : 'text-5xl lg:text-6xl'} font-black leading-tight tracking-tight text-white mb-8 transition-opacity duration-500`}>
+               {persistentText || currentText}
              </p>
           </div>
+
+          {/* THE SUBTITLE / KARAOKE */}
+          {aiState === "speaking" && currentText && (
+             <div className="relative z-10 w-full bg-slate-950/80 border border-slate-700/50 p-6 rounded-2xl mt-auto shadow-inner">
+               <div className="flex items-center gap-3 mb-3">
+                  <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                     <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                     IA a Falar:
+                  </span>
+               </div>
+               <p className="text-xl lg:text-2xl leading-relaxed text-slate-500 font-medium">
+                 {currentText.split(" ").map((word, i) => (
+                   <span key={i} className={`transition-colors duration-150 ${i <= currentWordIndex ? "text-emerald-400 underline decoration-emerald-400/50 underline-offset-4" : ""}`}>
+                      {word}{" "}
+                   </span>
+                 ))}
+               </p>
+             </div>
+          )}
         </div>
 
         {/* NUVEM E ORADOR */}
