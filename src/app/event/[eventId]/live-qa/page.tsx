@@ -3,8 +3,7 @@
 import { useState, useEffect, useRef, use } from "react";
 import { Mic, Activity, User, QrCode, Settings } from "lucide-react";
 import { VoiceSettingsModule } from '@/components/admin/VoiceSettingsModule';
-import { createClient } from "@supabase/supabase-js";
-
+import { supabase } from "@/utils/supabase/client";
 import QRCode from "react-qr-code";
 
 export default function LiveQAPanel({ params }: { params: Promise<{ eventId: string }> }) {
@@ -37,7 +36,6 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   
   const containerRef = useRef<HTMLDivElement>(null);
   const colors = ["#818cf8", "#c084fc", "#f472b6", "#34d399", "#facc15", "#60a5fa", "#ffffff"];
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
   // Voice setup
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
