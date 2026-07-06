@@ -105,15 +105,10 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
        setActiveUsersCount(count);
     }).subscribe();
 
-    const cmdChannel = supabase.channel('live_screen_commands');
-    cmdChannel.subscribe();
-    liveCommandChannelRef.current = cmdChannel;
-
     return () => {
       supabase.removeChannel(eventSub);
       supabase.removeChannel(questionsSub);
       supabase.removeChannel(presenceChannel);
-      supabase.removeChannel(cmdChannel);
     };
   }, [eventId, supabase]);
 
@@ -247,34 +242,18 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     addLog(`Perguntas para orador atualizadas para ${val}.`);
   };
 
-  const broadcastCommand = async (cmd: string, payload: any = {}) => {
-     if (liveCommandChannelRef.current) {
-        liveCommandChannelRef.current.send({
-           type: 'broadcast',
-           event: 'audio_command',
-           payload: {
-              target_screen_id: pairingId || null,
-              command: cmd,
-              ...payload
-           }
-        });
-     }
-     
-     if (cmd === 'intro' || cmd === 'play_question' || cmd === 'repeat_question') {
-        if (payload.text) {
-           const newConfig = { 
-              ...eventConfig, 
-              ai_force_speak: { 
-                text: payload.text, 
-                questionText: payload.questionText || null,
-                time: Date.now() 
-              },
-              target_screen_id: pairingId || null 
-           };
-           setEventConfig(newConfig);
-           await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
-        }
-     }
+  const triggerAISpeak = async (text: string, questionText: string | null = null) => {
+    const newConfig = { 
+       ...eventConfig, 
+       ai_force_speak: { 
+         text: text, 
+         questionText: questionText,
+         time: Date.now() 
+       },
+       target_screen_id: pairingId || null 
+    };
+    setEventConfig(newConfig);
+    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
   };
 
   const updateMacroState = async (state: string) => {
@@ -365,7 +344,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
          setIsProcessing(false);
        }
        
-       await broadcastCommand('play_question', { text: speech, questionText: nextQ.content });
+       await triggerAISpeak(speech, nextQ.content);
        await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
        addLog(`Pergunta avançada.`);
        fetchQuestions(); // Refresh UI
@@ -434,7 +413,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
 
       if (data.success && data.text) {
          addLog(`Introdução gerada com sucesso!`);
-         await broadcastCommand('intro', { text: data.text, questionText: firstQuestion });
+         await triggerAISpeak(data.text, firstQuestion);
          
          if (firstQuestionId) {
             await supabase.from('questions').update({ status: 'answered' }).eq('id', firstQuestionId);
@@ -456,21 +435,6 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
     addLog(`Modo de Q&A alterado para: ${newMode.toUpperCase()}`);
-  };
-
-  const killAudio = async () => {
-    addLog("EMERGÊNCIA: Comando de Mutar IA enviado!");
-    broadcastCommand('kill');
-  };
-
-  const pauseAudio = async () => {
-    addLog("Comando: Pausar IA");
-    broadcastCommand('pause');
-  };
-
-  const resumeAudio = async () => {
-    addLog("Comando: Continuar IA");
-    broadcastCommand('resume');
   };
 
   const changeSlideIndex = async (increment: boolean) => {
@@ -771,22 +735,6 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                <button onClick={repeatCurrentQuestion} className="w-full bg-slate-200 text-slate-900 hover:bg-slate-300 p-3 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-sm mb-4">
                  <RefreshCw className="w-4 h-4 text-slate-900" />
                  <span className="font-bold text-sm">Repetir Pergunta</span>
-               </button>
-
-               <div className="grid grid-cols-2 gap-3 mb-4">
-                 <button onClick={pauseAudio} className="bg-white text-slate-900 hover:bg-slate-200 p-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm">
-                   <Pause className="w-4 h-4" />
-                   <span className="text-sm font-bold">Pausar Voz</span>
-                 </button>
-                 <button onClick={resumeAudio} className="bg-white text-slate-900 hover:bg-slate-200 p-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm">
-                   <Play className="w-4 h-4" />
-                   <span className="text-sm font-bold">Continuar</span>
-                 </button>
-               </div>
-
-               <button onClick={killAudio} className="w-full bg-[#EF4444] hover:bg-red-600 p-4 rounded-2xl flex items-center justify-center gap-2 transition-all text-white group mt-5">
-                 <MicOff className="w-5 h-5 group-hover:animate-pulse" />
-                 <span className="font-bold text-sm uppercase tracking-wider">MUTAR IA (STOP)</span>
                </button>
             </div>
 
