@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, ExternalLink, User, Bot, Settings, Activity, Mic, PlayCircle, FastForward, Pause, Play, MicOff, MonitorPlay, LinkIcon, UserCheck, Radio, TerminalSquare, ChevronUp, ChevronDown, MessageSquare, AlertCircle, Monitor, RotateCcw, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, User, Bot, Settings, Activity, Mic, PlayCircle, FastForward, Pause, Play, MicOff, MonitorPlay, LinkIcon, UserCheck, Radio, TerminalSquare, ChevronUp, ChevronDown, MessageSquare, AlertCircle, Monitor, RotateCcw, RefreshCw, Download } from "lucide-react";
 import Link from "next/link";
 import QRCode from "react-qr-code";
 
@@ -815,13 +815,42 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                       navigator.clipboard.writeText(`${window.location.origin}/event/${eventId}/pergunta`);
                       addLog("Link copiado!");
                     }}
-                    className="bg-slate-200 hover:bg-white text-slate-900 font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm text-xs"
+                    className="bg-slate-200 hover:bg-white text-slate-900 font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm text-xs mb-2 w-full"
                   >
                      Copiar Link para Sala
                   </button>
+                  <button 
+                    onClick={() => {
+                      const svg = document.getElementById("qr-code-svg");
+                      if (!svg) return;
+                      const svgData = new XMLSerializer().serializeToString(svg);
+                      const img = new Image();
+                      img.onload = () => {
+                        const canvas = document.createElement("canvas");
+                        canvas.width = 1000;
+                        canvas.height = 1000;
+                        const ctx = canvas.getContext("2d");
+                        if (ctx) {
+                          ctx.fillStyle = "white";
+                          ctx.fillRect(0, 0, canvas.width, canvas.height);
+                          ctx.drawImage(img, 0, 0, 1000, 1000);
+                          const pngFile = canvas.toDataURL("image/png");
+                          const downloadLink = document.createElement("a");
+                          downloadLink.download = "QR_Code_Sala.png";
+                          downloadLink.href = pngFile;
+                          downloadLink.click();
+                        }
+                      };
+                      img.src = `data:image/svg+xml;base64,${btoa(svgData)}`;
+                      addLog("QR Code baixado!");
+                    }}
+                    className="bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-300 font-bold px-4 py-2 rounded-xl transition-all shadow-sm text-xs w-full flex items-center justify-center gap-2"
+                  >
+                     <Download className="w-3.5 h-3.5" /> Baixar QR Code
+                  </button>
                </div>
-               <div className="bg-white p-2 rounded-xl shadow-sm group-hover:scale-105 transition-transform">
-                  {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/pergunta`} size={56} />}
+               <div className="bg-white p-2 rounded-xl shadow-sm group-hover:scale-105 transition-transform flex items-center justify-center">
+                  {typeof window !== 'undefined' && <QRCode id="qr-code-svg" value={`${window.location.origin}/event/${eventId}/pergunta`} size={70} />}
                </div>
             </div>
           </div>
