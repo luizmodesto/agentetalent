@@ -556,7 +556,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
                    Aguardando perguntas...
                 </div>
              )}
-             <p className={`text-5xl lg:text-6xl font-black leading-tight tracking-tight transition-all duration-500 ${aiState === "speaking" ? "text-white" : "text-slate-400"}`}>
+             <p className={`${(persistentText || currentText).length > 250 ? 'text-2xl lg:text-3xl' : (persistentText || currentText).length > 150 ? 'text-3xl lg:text-4xl' : (persistentText || currentText).length > 80 ? 'text-4xl lg:text-5xl' : 'text-5xl lg:text-6xl'} font-black leading-tight tracking-tight transition-all duration-500 ${aiState === "speaking" ? "text-white" : "text-slate-400"}`}>
                {aiState === "speaking" ? displayedText : (persistentText || currentText)}
              </p>
           </div>
