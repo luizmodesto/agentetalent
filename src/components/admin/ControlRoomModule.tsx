@@ -207,7 +207,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
            const data = await res.json();
 
            if (data.success && data.text) {
-             const newConfig = { ...eventConfig, ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL', current_block_count: answeredCount + 1 };
+             const newConfig = { ...eventConfig, ai_force_speak: { text: data.text, time: Date.now(), questionText: nextQ.content }, target_screen_id: 'ALL', current_block_count: answeredCount + 1 };
              await supabase.from('events').update({
                personality: JSON.stringify(newConfig)
              }).eq('id', eventId);
