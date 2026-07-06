@@ -120,3 +120,7 @@ Sempre que perder a autenticação do Github e receber o Erro 403 (Permission De
 
 4. **Novo Gerador e Exportador HD de QR Code:**
    - Construída ferramenta que processa em plano de fundo (HTML5 Canvas) e exporta um ficheiro limpo `.png` nativo em escala gigante (1000x1000px) garantindo altíssima qualidade sem desfoque quando os diretores enviam a Placa QR para as gráficas e ecrãs do palco principal. A funcionalidade está junto do botão "Copiar Link de Sala" no módulo de Gestão de Eventos.
+
+5. **Resolução de Quedas Silenciosas do Realtime (WebSockets) na Vercel:**
+   - **Problema:** O Ecrã do Painel de Perguntas (`live-qa`) conectava-se perfeitamente à base de dados no ambiente local (`localhost`), mas em produção (Vercel) falhava silenciosamente e deixava de receber atualizações em tempo real (como mudanças de orador ou gatilhos de voz da IA). O erro no console mostrava: `WebSocket connection to wss://... failed`.
+   - **Solução (Histórico Crítico):** O erro ocorria devido a um espaço invisível ou caractere ausente no momento de copiar/colar a variável de ambiente `NEXT_PUBLIC_SUPABASE_ANON_KEY` no painel da Vercel. Como a chave vai na URL da requisição de upgrade do WebSocket (`?apikey=...`), qualquer erro de formatação corrompe o URL e força a rejeição imediata do servidor (CORS/Auth bypass rejection). Além disso, confirmou-se que o Supabase em produção exige que o Realtime seja explicitamente habilitado nas tabelas via SQL (`ALTER PUBLICATION supabase_realtime ADD TABLE...`).
