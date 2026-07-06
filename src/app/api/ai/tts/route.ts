@@ -11,7 +11,7 @@ const openai = new OpenAI({
 });
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const runtime = 'edge';
 
 export async function POST(request: Request) {
   try {
@@ -54,8 +54,8 @@ export async function POST(request: Request) {
                 })
              });
              if (fishResponse.ok) {
-                const buffer = Buffer.from(await fishResponse.arrayBuffer());
-                return new NextResponse(buffer, { headers: { 'Content-Type': 'audio/mpeg' } });
+                const arrayBuffer = await fishResponse.arrayBuffer();
+                return new Response(arrayBuffer, { headers: { 'Content-Type': 'audio/mpeg' } });
              } else {
                 return NextResponse.json({ error: "Erro Fish Audio: " + await fishResponse.text() }, { status: 500 });
              }
@@ -75,8 +75,8 @@ export async function POST(request: Request) {
                 })
              });
              if (elResponse.ok) {
-                const buffer = Buffer.from(await elResponse.arrayBuffer());
-                return new NextResponse(buffer, { headers: { 'Content-Type': 'audio/mpeg' } });
+                const arrayBuffer = await elResponse.arrayBuffer();
+                return new Response(arrayBuffer, { headers: { 'Content-Type': 'audio/mpeg' } });
              } else {
                 return NextResponse.json({ error: "Erro ElevenLabs: " + await elResponse.text() }, { status: 500 });
              }
@@ -91,8 +91,8 @@ export async function POST(request: Request) {
                 voice: (voiceConfig.openai_voice || "onyx") as any,
                 input: text,
              });
-             const buffer = Buffer.from(await mp3.arrayBuffer());
-             return new NextResponse(buffer, { headers: { 'Content-Type': 'audio/mpeg' } });
+             const arrayBuffer = await mp3.arrayBuffer();
+             return new Response(arrayBuffer, { headers: { 'Content-Type': 'audio/mpeg' } });
           }
        }
     }
@@ -104,8 +104,8 @@ export async function POST(request: Request) {
       input: text,
       speed: 1.0,
     });
-    const buffer = Buffer.from(await mp3.arrayBuffer());
-    return new NextResponse(buffer, { headers: { 'Content-Type': 'audio/mpeg' } });
+    const arrayBuffer = await mp3.arrayBuffer();
+    return new Response(arrayBuffer, { headers: { 'Content-Type': 'audio/mpeg' } });
 
   } catch (error: any) {
     console.error("Erro no TTS:", error);
