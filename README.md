@@ -99,3 +99,24 @@ Sempre que perder a autenticação do Github e receber o Erro 403 (Permission De
 4. **Correção de Deploys da Vercel (Build Time Erros):**
    - **Problema:** A Vercel cancelava as compilações (SSG/Pré-renderização) nas páginas e rotas de IA devido à falta de injeção das chaves `OPENAI_API_KEY` e `NEXT_PUBLIC_SUPABASE_URL` no momento do "build".
    - **Solução (Histórico para o futuro):** O uso de variáveis de ambiente estritas com o `!` no TypeScript (`process.env.OPENAI_API_KEY!`) no escopo global de rotas Next.js bloqueava o processo. Foi substituído em todo o projeto por "fallback keys" seguras (`|| 'dummy_key'`). Isso permite que o código seja compilado com sucesso, puxando as chaves verdadeiras em tempo de execução.
+
+---
+
+## Sessão: 06 de Julho de 2026
+**Funcionalidades Implementadas e Correções Críticas (Vercel e Supabase):**
+
+1. **Correção de Timeouts Severos na Nuvem (Vercel):**
+   - **Problema:** A rota de Inteligência Artificial (`/api/ai/qa-moderation` e `/api/ai/tts`) falhava misteriosamente ao ser implantada na Vercel (Timeout HTML 504), encravando a interface do utilizador, enquanto em Localhost funcionava.
+   - **Solução:** Forçada a inibição de Cache e execução estática pelo Next.js App Router através das diretivas de exportação globais: `export const dynamic = 'force-dynamic'` e elevação do tempo máximo de servidor `export const maxDuration = 60;`.
+   - **Proteção UI:** Envolvidas todas as requisições (fetches) aos Endpoints de IA com blocos `try/catch` para impedir bloqueios visuais permanentes nas telas de Controlo e Q&A em caso de indisponibilidade da OpenAI ou ElevenLabs.
+
+2. **Resolução de "Race Conditions" na Base de Dados:**
+   - **Problema:** Ao iniciar o Bloco Q&A no "Painel de 3 Colunas" (`ManageEventModule`), o gatilho de fala da IA era enviado e imediatamente esmagado/reescrito pela próxima ordem de atualização sequencial.
+   - **Solução:** Combinada as transições numa única requisição de atualização (Update) à coluna `personality` da tabela Supabase `events`. O painel ACE3 (Telão Q&A) deixou de omitir perguntas.
+
+3. **Correção de Vazamento de Conexões (Realtime Drops):**
+   - **Problema:** A página de projeção de público (`live-qa`) criava repetidamente um novo cliente local de Supabase (`createClient(...)`) a cada recarregamento da grelha de React (efeito re-render), levando à desconexão permanente ou perda de "Avisos em Tempo Real".
+   - **Solução:** O ecrã cliente passou a usar exclusivamente a instância global (Singleton) partilhada em `@/utils/supabase/client`, mantendo uma assinatura Web-socket blindada.
+
+4. **Novo Gerador e Exportador HD de QR Code:**
+   - Construída ferramenta que processa em plano de fundo (HTML5 Canvas) e exporta um ficheiro limpo `.png` nativo em escala gigante (1000x1000px) garantindo altíssima qualidade sem desfoque quando os diretores enviam a Placa QR para as gráficas e ecrãs do palco principal. A funcionalidade está junto do botão "Copiar Link de Sala" no módulo de Gestão de Eventos.
