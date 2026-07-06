@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, ExternalLink, User, Bot, Settings, Activity, Mic, PlayCircle, FastForward, Pause, Play, MicOff, MonitorPlay, LinkIcon, UserCheck, Radio, TerminalSquare, ChevronUp, ChevronDown, MessageSquare, AlertCircle, Monitor, RotateCcw } from "lucide-react";
+import { ArrowLeft, ExternalLink, User, Bot, Settings, Activity, Mic, PlayCircle, FastForward, Pause, Play, MicOff, MonitorPlay, LinkIcon, UserCheck, Radio, TerminalSquare, ChevronUp, ChevronDown, MessageSquare, AlertCircle, Monitor, RotateCcw, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import QRCode from "react-qr-code";
 
@@ -136,14 +136,50 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     addLog(`Fase alterada para: ${phase}`);
   };
 
+  const triggerAIProcessing = async () => {
+    const activeSession = sessionsList.find(s => s.status === 'live');
+    if (!activeSession) {
+      addLog("ERRO: Nenhuma sessão ativa para Curadoria.");
+      return;
+    }
+    const speakerObj = activeSession.speakers || activeSession.speaker;
+    
+    setIsProcessing(true);
+    addLog("A preparar perguntas em background (Curadoria IA)...");
+    try {
+      const res = await fetch('/api/ai/qa-curation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: activeSession.id,
+          maxPerguntas: eventConfig?.max_questions || 5,
+          speakerName: speakerObj?.name || 'Orador',
+          theme: speakerObj?.bio || ''
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+         addLog(`Curadoria Concluída: ${data.processed} processadas, ${data.approved} aprovadas.`);
+         fetchQuestions();
+      } else {
+         addLog("ERRO na Curadoria IA.");
+      }
+    } catch (e) {
+      addLog("ERRO de rede na Curadoria IA.");
+    }
+    setIsProcessing(false);
+  };
+
   const toggleEventOpen = async () => {
     const newState = !eventConfig?.is_event_open;
     const newConfig = { ...eventConfig, is_event_open: newState, target_screen_id: pairingId || null };
     setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
-    addLog(`Evento ${newState ? 'ABERTO' : 'FECHADO'} para entrada de participantes.`);
+    addLog(`Evento ${newState ? 'ABERTO' : 'FECHADO'} para o Público.`);
     
-    if (newState) {
+    if (!newState) {
+      triggerAIProcessing();
+    } else {
       addLog("Modo Curadoria Silenciosa ATIVADO. Novas perguntas serão processadas em background.");
       runSilentCuration(); // Run immediately once when opened
     }
@@ -711,9 +747,14 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                  <span className="font-bold text-sm">{isProcessing ? "A processar..." : "Iniciar Bloco Q&A"}</span>
                </button>
 
-               <button onClick={triggerNextQuestion} className="w-full bg-white text-slate-900 hover:bg-slate-200 p-4 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-sm mb-4">
+               <button onClick={triggerNextQuestion} className="w-full bg-white text-slate-900 hover:bg-slate-200 p-4 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-sm mb-3">
                  <FastForward className="w-5 h-5 text-slate-900" />
                  <span className="font-bold text-sm">Próxima Pergunta IA</span>
+               </button>
+
+               <button onClick={repeatCurrentQuestion} className="w-full bg-slate-200 text-slate-900 hover:bg-slate-300 p-3 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-sm mb-4">
+                 <RefreshCw className="w-4 h-4 text-slate-900" />
+                 <span className="font-bold text-sm">Repetir Pergunta</span>
                </button>
 
                <div className="grid grid-cols-2 gap-3 mb-4">
