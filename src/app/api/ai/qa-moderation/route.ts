@@ -7,7 +7,7 @@ const openai = new OpenAI({
 
 export async function POST(req: Request) {
   try {
-    const { managerName, speakerName, nextSpeakerName, action, firstQuestion, isFirstSpeaker } = await req.json();
+    const { managerName, speakerName, nextSpeakerName, action, firstQuestion, isFirstSpeaker, aiGender } = await req.json();
 
     if (!action) {
       return NextResponse.json({ error: "Missing action" }, { status: 400 });
@@ -19,6 +19,9 @@ export async function POST(req: Request) {
 
     let systemPrompt = "";
     
+    const genderInstructions = aiGender === 'female'
+      ? "IMPORTANTE: A tua persona e voz são FEMININAS. Usa flexões de género no feminino para ti própria (ex: 'Estou ansiosa', 'Estou muito animada', 'Muito obrigada')."
+      : "IMPORTANTE: A tua persona e voz são MASCULINAS. Usa flexões de género no masculino para ti próprio (ex: 'Estou ansioso', 'Estou muito animado', 'Muito obrigado').";
     if (action === "intro") {
       const firstQContext = firstQuestion ? `O público enviou perguntas, e a PRIMEIRA PERGUNTA é: "${firstQuestion}". Deves fazer a introdução e DEPOIS LER EXATAMENTE o texto desta primeira pergunta de forma contínua.` : "De momento não há perguntas do público na fila, faz apenas a introdução e aguarda.";
       
@@ -39,6 +42,7 @@ ${speakerContext}
 Exemplo de estilo para 1º orador: "Olá ${manager}, muito obrigado por me passares a palavra. Estou muito feliz em iniciar este debate com o ${speaker}. Vamos lá à nossa primeira pergunta: [texto exato da pergunta]"
 Exemplo de estilo para próximos oradores: "Olha eu aqui novamente, ${manager}! Agora vamos iniciar com o ${speaker} mais uma sequência de perguntas da nossa audiência. Então vamos lá: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada pela IA.
+${genderInstructions}
 `;
     } else if (action === "closing") {
       systemPrompt = `
@@ -50,6 +54,7 @@ Gera UMA única frase natural para encerrar o bloco de Q&A.
 - Informação sobre transição: ${nextSpeakerInfo}
 Exemplo: "Foi um prazer ouvir as tuas respostas, ${speaker}, muito obrigado. Agora passo a palavra ao ${manager}, que irá dar continuidade e apresentar o próximo orador."
 Não devolvas mais nada além da frase falada.
+${genderInstructions}
 `;
     } else if (action === "next_question") {
       systemPrompt = `
@@ -61,6 +66,7 @@ Gera UMA pequena frase natural para avançar para a próxima pergunta.
 - LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ, sem alterar o seu conteúdo.
 Exemplo: "Muito bem, vamos passar à próxima questão: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada pela IA, lendo a pergunta em seguida.
+${genderInstructions}
 `;
     } else if (action === "last_question") {
       systemPrompt = `
@@ -75,6 +81,7 @@ Gera UMA frase para introduzir esta última pergunta.
 - LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ, sem alterar o seu conteúdo.
 Exemplo: "Antes de passar a palavra ao ${manager}, despeço-me deste bloco agradecendo-te, ${speaker}. E termino com a seguinte questão: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada, lendo a pergunta em seguida.
+${genderInstructions}
 `;
     } else if (action === "repeat_question") {
       systemPrompt = `
@@ -86,6 +93,7 @@ Gera UMA frase a avisar que vais repetir a pergunta.
 - A pergunta a repetir é: "${firstQuestion}".
 - LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ.
 Não devolvas mais nada além da frase falada, lendo a pergunta em seguida.
+${genderInstructions}
 `;
     } else {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });

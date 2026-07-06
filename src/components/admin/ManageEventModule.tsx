@@ -323,7 +323,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                managerName: managerName,
                speakerName: speakerObj?.name || 'Orador',
                action: 'last_question',
-               firstQuestion: speech
+               firstQuestion: speech,
+               aiGender: eventConfig?.tts_config?.gender || 'male'
              })
            });
            const data = await res.json();
@@ -346,7 +347,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                managerName: managerName,
                speakerName: speakerObj?.name || 'Orador',
                action: 'next_question',
-               firstQuestion: speech
+               firstQuestion: speech,
+               aiGender: eventConfig?.tts_config?.gender || 'male'
              })
            });
            const data = await res.json();
@@ -390,7 +392,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
             managerName: managerName,
             speakerName: speakerObj?.name || 'Orador',
             action: 'repeat_question',
-            firstQuestion: questionText
+            firstQuestion: questionText,
+            aiGender: eventConfig?.tts_config?.gender || 'male'
           })
         });
         const data = await res.json();
@@ -440,7 +443,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
           speakerName: speakerObj?.name || 'Orador',
           action: 'intro',
           firstQuestion: firstQuestion,
-          isFirstSpeaker: activeSessionIndex === 0
+          isFirstSpeaker: activeSessionIndex === 0,
+          aiGender: eventConfig?.tts_config?.gender || 'male'
         })
       });
 

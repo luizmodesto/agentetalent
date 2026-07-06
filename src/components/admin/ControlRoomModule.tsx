@@ -131,6 +131,15 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
       const { createClient } = await import('@supabase/supabase-js');
       const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'), (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder'));
 
+      let dynamicManagerName = "Gestor";
+      const { data: managerData } = await supabase.from('managers').select('name').eq('event_id', eventId).limit(1).maybeSingle();
+      if (managerData?.name) dynamicManagerName = managerData.name;
+
+      const { data: globalEventData } = await supabase.from('events').select('personality').eq('id', eventId).single();
+      let globalEventConfig: any = {};
+      if (globalEventData?.personality) globalEventConfig = JSON.parse(globalEventData.personality);
+      const dynamicAiGender = globalEventConfig?.tts_config?.gender || 'male';
+
       if (cmd === "Digitalent, vamos às perguntas") {
         if (!activeSession || !speaker) {
           addLog("ERRO: Nenhuma sessão ativa encontrada.");
@@ -147,10 +156,11 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            managerName: "Gestor",
+            managerName: dynamicManagerName,
             speakerName: speaker.name,
             action: "intro",
-            firstQuestion: firstQuestion
+            firstQuestion: firstQuestion,
+            aiGender: dynamicAiGender
           })
         });
 
@@ -197,10 +207,11 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({
-               managerName: "Gestor",
+               managerName: dynamicManagerName,
                speakerName: speaker.name,
                action: isLastQuestion ? "last_question" : "next_question",
-               firstQuestion: nextQ.content
+               firstQuestion: nextQ.content,
+               aiGender: dynamicAiGender
              })
            });
 
@@ -219,9 +230,10 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({
-               managerName: "Gestor",
+               managerName: dynamicManagerName,
                speakerName: speaker.name,
-               action: "closing"
+               action: "closing",
+               aiGender: dynamicAiGender
              })
            });
            const data = await res.json();
