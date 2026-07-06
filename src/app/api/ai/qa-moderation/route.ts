@@ -39,8 +39,9 @@ ${speakerContext}
 - Introduz a fase de perguntas do público.
 - ${firstQContext}
 - LÊ A PERGUNTA EXATAMENTE COMO FOI FORNECIDA (já foi curada por mim). Não tentes reescrever a pergunta do público.
-Exemplo de estilo para 1º orador: "Olá ${manager}, muito obrigado por me passar a palavra. Estou muito feliz em iniciar este debate com o ${speaker}. Vamos lá à nossa primeira pergunta: [texto exato da pergunta]"
-Exemplo de estilo para próximos oradores: "Olha eu aqui novamente, ${manager}! Agora vamos iniciar com o ${speaker} mais uma sequência de perguntas da nossa audiência. Então vamos lá: [texto exato da pergunta]"
+- Presta atenção ao nome do orador/oradora (${speaker}) e do gestor/gestora (${manager}) para usares os artigos corretos (ex: "o orador João", "a oradora Maria", "à gestora Inês"). Adapta as palavras 'orador' ou 'gestor' ao género do nome.
+Exemplo de estilo para 1º orador: "Olá ${manager}, muito obrigado por me passar a palavra. Estou muito feliz em iniciar este debate com o/a ${speaker}. Vamos lá à nossa primeira pergunta: [texto exato da pergunta]"
+Exemplo de estilo para próximos oradores: "Olha eu aqui novamente, ${manager}! Agora vamos iniciar com o/a ${speaker} mais uma sequência de perguntas da nossa audiência. Então vamos lá: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada pela IA.
 ${genderInstructions}
 `;
@@ -49,10 +50,11 @@ ${genderInstructions}
 Tu és um moderador virtual de eventos ao vivo.
 Gera UMA única frase natural para encerrar o bloco de Q&A.
 - O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa tratamento FORMAL (terceira pessoa, "Você"). NUNCA trates por "Tu".
-- Agradece ao orador atual (${speaker}) pelas suas respostas.
-- Faz uma transição natural, devolvendo a palavra ao Gestor (${manager}) e introduzindo o próximo orador, se aplicável.
+- Agradece ao orador/oradora atual (${speaker}) pelas suas respostas.
+- Faz uma transição natural, devolvendo a palavra ao Gestor/Gestora (${manager}) e introduzindo o próximo orador/oradora, se aplicável.
+- Presta atenção ao género dos nomes para usares "o orador/a oradora" ou "o gestor/a gestora" corretamente.
 - Informação sobre transição: ${nextSpeakerInfo}
-Exemplo: "Foi um prazer ouvir as suas respostas, ${speaker}, muito obrigado. Agora passo a palavra ao ${manager}, que irá dar continuidade e apresentar o próximo orador."
+Exemplo: "Foi um prazer ouvir as suas respostas, ${speaker}, muito obrigado. Agora passo a palavra ao/à ${manager}, que irá dar continuidade e apresentar o próximo orador."
 Não devolvas mais nada além da frase falada.
 ${genderInstructions}
 `;
@@ -75,11 +77,12 @@ Esta é a ÚLTIMA PERGUNTA do bloco para o orador atual (${speaker}).
 Gera UMA frase para introduzir esta última pergunta.
 - O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa tratamento FORMAL (terceira pessoa, "Você"). NUNCA trates por "Tu".
 - Informa que esta é a última pergunta do bloco.
-- Agradece ao orador (${speaker}) pelas respostas.
-- Informa que, após a resposta, a palavra será devolvida ao Gestor (${manager}).
+- Agradece ao orador/oradora (${speaker}) pelas respostas.
+- Informa que, após a resposta, a palavra será devolvida ao Gestor/Gestora (${manager}).
+- Presta atenção ao género dos nomes para adaptar as palavras 'orador', 'oradora', 'gestor', 'gestora' corretamente.
 - A última pergunta é: "${firstQuestion}".
 - LÊ A PERGUNTA EXATAMENTE COMO ESTÁ AÍ, sem alterar o seu conteúdo.
-Exemplo: "Antes de passar a palavra ao ${manager}, despeço-me deste bloco agradecendo-lhe, ${speaker}. E termino com a seguinte questão: [texto exato da pergunta]"
+Exemplo: "Antes de passar a palavra ao/à ${manager}, despeço-me deste bloco agradecendo-lhe, ${speaker}. E termino com a seguinte questão: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada, lendo a pergunta em seguida.
 ${genderInstructions}
 `;
