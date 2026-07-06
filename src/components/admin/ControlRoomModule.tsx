@@ -152,33 +152,40 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
         const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
         const firstQuestion = (qs && qs.length > 0) ? qs[0].content : undefined;
 
-        const res = await fetch('/api/ai/qa-moderation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            managerName: dynamicManagerName,
-            speakerName: speaker.name,
-            action: "intro",
-            firstQuestion: firstQuestion,
-            aiGender: dynamicAiGender
-          })
-        });
+        try {
+          const res = await fetch('/api/ai/qa-moderation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              managerName: dynamicManagerName,
+              speakerName: speaker.name,
+              action: "intro",
+              firstQuestion: firstQuestion,
+              aiGender: dynamicAiGender
+            })
+          });
 
-        const data = await res.json();
-        setIsProcessing(false);
-
-        if (data.success && data.text) {
-           addLog(`IA Introdução gerada com sucesso.`);
-           await supabase.from('events').update({
-             personality: JSON.stringify({ ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL' })
-           }).eq('id', eventId);
-           addLog("Teleprompter: Introdução enviada.");
-           
-           if (qs && qs.length > 0) {
-             await supabase.from('questions').update({ status: 'answered' }).eq('id', qs[0].id);
-           }
-        } else {
-           addLog("ERRO no processamento de IA.");
+          if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+          const data = await res.json();
+          
+          if (data.success && data.text) {
+             addLog(`IA Introdução gerada com sucesso.`);
+             await supabase.from('events').update({
+               personality: JSON.stringify({ ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL' })
+             }).eq('id', eventId);
+             addLog("Teleprompter: Introdução enviada.");
+             
+             if (qs && qs.length > 0) {
+               await supabase.from('questions').update({ status: 'answered' }).eq('id', qs[0].id);
+             }
+          } else {
+             addLog("ERRO no processamento de IA.");
+          }
+        } catch (err: any) {
+          console.error("Intro Error:", err);
+          addLog(`ERRO: Falha na comunicação com a IA (${err.message}).`);
+        } finally {
+          setIsProcessing(false);
         }
       }
 

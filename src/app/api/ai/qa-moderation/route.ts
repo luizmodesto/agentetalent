@@ -5,6 +5,9 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || 'dummy_key',
 });
 
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
 export async function POST(req: Request) {
   try {
     const { managerName, speakerName, nextSpeakerName, action, firstQuestion, isFirstSpeaker, aiGender } = await req.json();
