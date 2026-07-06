@@ -133,11 +133,17 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
              if (config.current_phase) setCurrentPhase(config.current_phase);
              if (config.ai_mode) setAiMode(config.ai_mode);
              
+             console.log("Recebido postgres_changes:", config.ai_force_speak);
+             
              if (config.ai_force_speak && config.ai_force_speak.time && config.ai_force_speak.time > lastAlertTimeRef.current) {
                 lastAlertTimeRef.current = config.ai_force_speak.time;
                 forceAISpeak(config.ai_force_speak.text, config.ai_force_speak.questionText);
+             } else {
+                console.log("Não passou no check de tempo.", config.ai_force_speak?.time, lastAlertTimeRef.current);
              }
-           } catch(e) {}
+           } catch(e) {
+             console.error("Erro no JSON.parse:", e);
+           }
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'questions' }, async (payload) => {
@@ -282,16 +288,25 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
            setAiState("idle");
            audioRef.current = null;
         };
-        audio.onerror = () => fallbackToNativeTTS(text);
+        audio.onerror = () => {
+           setCurrentText("ERRO AO REPRODUZIR ÁUDIO NO NAVEGADOR");
+           fallbackToNativeTTS(text);
+        };
         
         setAiState("speaking");
         setCurrentText(text);
-        audio.play().catch(() => fallbackToNativeTTS(text));
+        audio.play().catch(err => {
+           setCurrentText("ERRO DE AUTOPLAY: " + err.message);
+           fallbackToNativeTTS(text);
+        });
       } else {
-        fallbackToNativeTTS(text);
+        const errText = await res.text();
+        setCurrentText("ERRO API TTS (500/504): " + errText);
+        setAiState("idle"); // forçar idle para mostrar o texto de erro em vez de falar nativo para podermos ler
       }
-    } catch (e) {
-      fallbackToNativeTTS(text);
+    } catch (e: any) {
+      setCurrentText("ERRO CRÍTICO NO FETCH: " + e.message);
+      setAiState("idle");
     }
   };
 
