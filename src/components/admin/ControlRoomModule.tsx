@@ -20,6 +20,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
   const [speaker, setSpeaker] = useState<any>(null);
   const [approvedQuestions, setApprovedQuestions] = useState<any[]>([]);
   const [closingRemark, setClosingRemark] = useState("");
+  const [showQR, setShowQR] = useState(false);
 
   const [logs, setLogs] = useState<{time: string, msg: string}[]>([
     { time: "18:00:01", msg: "Agente iniciado. Carregando modelo pt-BR_onyx." },
@@ -212,7 +213,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
               </div>
             </a>
             
-            <a href={`/event/${eventId}/pergunta`} target="_blank" className="group bg-slate-800/50 border border-slate-700/50 hover:bg-slate-700/50 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
+            <div className="group bg-slate-800/50 border border-slate-700/50 hover:bg-slate-700/50 p-5 rounded-xl text-left transition-all relative overflow-hidden flex flex-col justify-between">
               <div>
                 <Smartphone className="w-6 h-6 text-emerald-400 mb-3 group-hover:scale-110 transition-transform" />
                 <h4 className="font-bold text-slate-200 mb-1">Tela do Público (Q&A)</h4>
@@ -221,10 +222,18 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
                   {typeof window !== 'undefined' ? `${window.location.origin}/event/${eventId}/pergunta` : `/event/${eventId}/pergunta`}
                 </div>
               </div>
-              <div className="mt-4 flex items-center gap-2 text-xs font-bold text-emerald-400 group-hover:translate-x-1 transition-transform">
-                Abrir em nova aba <ExternalLink className="w-3 h-3" />
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <a href={`/event/${eventId}/pergunta`} target="_blank" className="flex items-center gap-2 text-xs font-bold text-emerald-400 hover:text-emerald-300 transition-colors group-hover:translate-x-1">
+                  Abrir em nova aba <ExternalLink className="w-3 h-3" />
+                </a>
+                <button 
+                  onClick={(e) => { e.preventDefault(); setShowQR(true); }} 
+                  className="flex justify-center items-center gap-2 text-xs font-bold bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-3 py-2 rounded-lg transition-colors border border-emerald-500/20"
+                >
+                  Gerar QR Code <Monitor className="w-3 h-3" />
+                </button>
               </div>
-            </a>
+            </div>
           </div>
         </div>
       </div>
@@ -248,6 +257,53 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
           </div>
         </div>
       </div>
+
+      {/* Modal QR Code */}
+      {showQR && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-700 p-8 rounded-3xl shadow-2xl flex flex-col items-center relative max-w-sm w-full">
+            <button 
+              onClick={() => setShowQR(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-2 rounded-full transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-xl font-bold text-white mb-2">Público (Q&A)</h3>
+            <p className="text-sm text-slate-400 mb-6 text-center">Peça ao público para ler o QR Code e enviar perguntas.</p>
+            
+            <div className="bg-white p-4 rounded-2xl relative shadow-inner mb-6">
+              <QRCode 
+                value={typeof window !== 'undefined' ? `${window.location.origin}/event/${eventId}/pergunta` : `/event/${eventId}/pergunta`} 
+                size={220} 
+                level="H"
+              />
+              {/* Logo Overlay */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200">
+                  <div className="w-12 h-12 relative flex items-center justify-center overflow-hidden rounded-xl">
+                    <img src="https://i.imgur.com/7g8ZWrI.png" alt="Logo DJ" className="object-contain w-full h-full" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="w-full">
+              <div className="bg-slate-800 rounded-lg p-3 text-xs text-emerald-400 font-mono text-center break-all border border-slate-700 mb-4">
+                {typeof window !== 'undefined' ? `${window.location.origin}/event/${eventId}/pergunta` : `/event/${eventId}/pergunta`}
+              </div>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(typeof window !== 'undefined' ? `${window.location.origin}/event/${eventId}/pergunta` : `/event/${eventId}/pergunta`);
+                  addLog("Link copiado para a área de transferência.");
+                }}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 rounded-xl transition-colors shadow-sm"
+              >
+                Copiar Link
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

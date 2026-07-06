@@ -43,6 +43,16 @@ Gera UMA única frase natural para encerrar o bloco de Q&A.
 Exemplo: "Foi um prazer ouvir as tuas respostas, ${speaker}, muito obrigado. Agora passo a palavra ao ${manager}, que irá dar continuidade e apresentar o próximo orador."
 Não devolvas mais nada além da frase falada.
 `;
+    } else if (action === "next_question") {
+      systemPrompt = `
+Tu és um moderador virtual de eventos ao vivo.
+Gera UMA pequena frase natural para avançar para a próxima pergunta.
+- O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa "tu" formal.
+- Apenas introduz a nova pergunta, sem repetir o que já disseste na introdução inicial.
+- A próxima pergunta que vais ler é: "${firstQuestion}".
+Exemplo: "Muito bem, vamos passar à próxima questão do público: [lê a pergunta]"
+Não devolvas mais nada além da frase falada pela IA, lendo a pergunta em seguida.
+`;
     } else {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }

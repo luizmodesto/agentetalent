@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
@@ -87,7 +87,6 @@ export async function POST(request: Request) {
                 model: "tts-1",
                 voice: (voiceConfig.openai_voice || "onyx") as any,
                 input: text,
-                speed: speedRate,
              });
              const buffer = Buffer.from(await mp3.arrayBuffer());
              return new NextResponse(buffer, { headers: { 'Content-Type': 'audio/mpeg' } });

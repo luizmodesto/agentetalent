@@ -211,7 +211,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     addLog(`Perguntas para orador atualizadas para ${val}.`);
   };
 
-  const broadcastCommand = (cmd: string, payload: any = {}) => {
+  const broadcastCommand = async (cmd: string, payload: any = {}) => {
      if (liveCommandChannelRef.current) {
         liveCommandChannelRef.current.send({
            type: 'broadcast',
@@ -222,6 +222,22 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
               ...payload
            }
         });
+     }
+     
+     if (cmd === 'intro' || cmd === 'play_question' || cmd === 'repeat_question') {
+        if (payload.text) {
+           const newConfig = { 
+              ...eventConfig, 
+              ai_force_speak: { 
+                text: payload.text, 
+                questionText: payload.questionText || null,
+                time: Date.now() 
+              },
+              target_screen_id: pairingId || null 
+           };
+           setEventConfig(newConfig);
+           await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+        }
      }
   };
 
@@ -287,11 +303,34 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
            console.error("Erro a gerar fecho:", e);
          }
          setIsProcessing(false);
+       } else {
+         // Not the last question, generate a brief transition (next_question)
+         setIsProcessing(true);
+         const speakerObj = activeSession.speakers || activeSession.speaker;
+         try {
+           const res = await fetch('/api/ai/qa-moderation', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+               managerName: managerName,
+               speakerName: speakerObj?.name || 'Orador',
+               action: 'next_question',
+               firstQuestion: speech
+             })
+           });
+           const data = await res.json();
+           if (data.success && data.text) {
+              speech = data.text;
+           }
+         } catch (e) {
+           console.error("Erro a gerar próxima pergunta:", e);
+         }
+         setIsProcessing(false);
        }
-
-       broadcastCommand('play_question', { text: speech });
+       
+       await broadcastCommand('play_question', { text: speech, questionText: nextQ.content });
        await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
-       addLog(`Pergunta ativada: "${nextQ.content.substring(0, 30)}..."`);
+       addLog(`Pergunta avançada.`);
        fetchQuestions(); // Refresh UI
     } else {
        addLog("Fila vazia: não há perguntas aprovadas na fila.");
@@ -343,7 +382,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
 
       if (data.success && data.text) {
          addLog(`Introdução gerada com sucesso!`);
-         broadcastCommand('intro', { text: data.text });
+         await broadcastCommand('intro', { text: data.text, questionText: firstQuestion });
          
          if (firstQuestionId) {
             await supabase.from('questions').update({ status: 'answered' }).eq('id', firstQuestionId);

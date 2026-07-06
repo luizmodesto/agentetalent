@@ -305,6 +305,7 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
           const audio = new Audio(url);
+          audio.playbackRate = speed;
           audio.onended = () => setIsTesting(false);
           audio.onerror = () => setIsTesting(false);
           audio.play();
@@ -383,7 +384,12 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
             
             <div>
               <label className="block text-sm font-medium text-neutral-400 mb-2">Género da Voz</label>
-              <select value={gender} onChange={e => setGender(e.target.value)} className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-lg px-4 py-3 text-sm text-white">
+              <select value={gender} onChange={e => {
+                const newGender = e.target.value;
+                setGender(newGender);
+                if (newGender === "female") setOpenaiVoice("shimmer");
+                else setOpenaiVoice("onyx");
+              }} className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-lg px-4 py-3 text-sm text-white">
                 <option value="female">Feminino</option>
                 <option value="male">Masculino</option>
               </select>
@@ -445,7 +451,12 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
                   <label className="block text-sm font-medium text-neutral-400 mb-2">Vozes de Palco</label>
                   <select 
                     value={openaiVoice} 
-                    onChange={e => setOpenaiVoice(e.target.value)}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setOpenaiVoice(v);
+                      if (["shimmer", "alloy", "nova"].includes(v)) setGender("female");
+                      else setGender("male");
+                    }}
                     className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500"
                   >
                     <option value="onyx">Onyx (Masculino Profundo / Recomendado)</option>

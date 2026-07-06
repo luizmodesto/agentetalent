@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, use } from "react";
-import { Mic, Activity, User, QrCode } from "lucide-react";
+import { Mic, Activity, User, QrCode, Settings } from "lucide-react";
+import { VoiceSettingsModule } from '@/components/admin/VoiceSettingsModule';
 import { createClient } from "@supabase/supabase-js";
 
 import QRCode from "react-qr-code";
@@ -18,10 +19,12 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   
   const [aiState, setAiState] = useState<"idle" | "processing" | "speaking" | "paused">("idle");
   const [currentText, setCurrentText] = useState("A aguardar interação...");
+  const [persistentText, setPersistentText] = useState("");
   const [displayedText, setDisplayedText] = useState("");
   const [isEventOpen, setIsEventOpen] = useState(false);
   const [currentPhase, setCurrentPhase] = useState("Abertura");
   const [aiMode, setAiMode] = useState("auto");
+  const [isVoiceSettingsOpen, setIsVoiceSettingsOpen] = useState(false);
   const lastAlertTimeRef = useRef<number>(0);
   const lastSpokenTextRef = useRef<string>("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -134,7 +137,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
              
              if (config.ai_force_speak && config.ai_force_speak.time && config.ai_force_speak.time > lastAlertTimeRef.current) {
                 lastAlertTimeRef.current = config.ai_force_speak.time;
-                forceAISpeak(config.ai_force_speak.text);
+                forceAISpeak(config.ai_force_speak.text, config.ai_force_speak.questionText);
              }
            } catch(e) {}
         }
@@ -177,7 +180,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
               case 'intro':
               case 'play_question':
                  if (data.text) {
-                   forceAISpeak(data.text);
+                   forceAISpeak(data.text, data.questionText);
                    lastSpokenTextRef.current = data.text;
                  }
                  break;
@@ -253,8 +256,14 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
     }
   };
 
-  const forceAISpeak = async (text: string) => {
+  const forceAISpeak = async (text: string, questionText?: string) => {
     try {
+      if (questionText) {
+         setPersistentText(questionText);
+      } else if (text && !persistentText) {
+         setPersistentText("");
+      }
+      
       setAiState("processing");
       
       const res = await fetch('/api/ai/tts', {
@@ -291,7 +300,8 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   // Teleprompter Typewriter Effect
   useEffect(() => {
     if (aiState === "speaking") {
-      const words = currentText.split(" ");
+      const activeText = persistentText || currentText;
+      const words = activeText.split(" ");
       let currentIndex = 0;
       setDisplayedText("");
       
@@ -313,10 +323,6 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   }, [currentText, aiState, rate]);
 
 
-  // Removed wordcloud library usage as it renders canvas, preventing CSS animations
-  // We will map authorsData directly to HTML spans in the render function
-
-  // CSS styles for the animated Word Cloud spans
   const wordCloudStyles = `
     @keyframes wordFade {
       0% { opacity: 0; filter: blur(3px); }
@@ -361,7 +367,6 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
       
       const list = authorsData.map(a => [a.text, Math.min(Math.max(a.value, 15), 45)]);
       
-      // Clean up previous elements if any
       const container = containerRef.current;
       Array.from(container.children).forEach(child => {
          if (child.tagName.toUpperCase() === 'SPAN') {
@@ -483,6 +488,19 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
         <div className="flex items-center gap-4 w-1/3">
           <img src="https://i.imgur.com/EpDGrzT.png" alt="Logo" className="h-12 object-contain" />
           <h1 className="text-2xl font-bold tracking-tight text-white/90">{eventName}</h1>
+          {/* Modal Configuração de Voz */}
+          {isVoiceSettingsOpen && (
+            <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
+              <div className="bg-[#0F172A] w-full max-w-4xl rounded-3xl border border-slate-700/50 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+                 <button onClick={() => setIsVoiceSettingsOpen(false)} className="absolute top-4 right-4 bg-slate-800 text-white p-2 rounded-full hover:bg-slate-700">
+                    ✕
+                 </button>
+                 <div className="p-8">
+                   <VoiceSettingsModule eventId={eventId} supabase={supabase} />
+                 </div>
+              </div>
+            </div>
+          )}
         </div>
         
         <div className="w-1/3 text-center flex flex-col items-center">
@@ -496,6 +514,9 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
         </div>
 
         <div className="w-1/3 flex justify-end items-center gap-6">
+          <button onClick={() => setIsVoiceSettingsOpen(true)} className="flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-slate-800">
+             <Settings className="w-4 h-4" /> Voz
+          </button>
           <div className="text-right">
              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">ID do Ecrã</div>
              <div className="text-2xl font-black text-white tracking-widest bg-slate-800/50 px-3 py-1 rounded-xl border border-slate-700">{screenId}</div>
@@ -536,7 +557,7 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
                 </div>
              )}
              <p className={`text-5xl lg:text-6xl font-black leading-tight tracking-tight transition-all duration-500 ${aiState === "speaking" ? "text-white" : "text-slate-400"}`}>
-               {displayedText}
+               {aiState === "speaking" ? displayedText : (persistentText || currentText)}
              </p>
           </div>
         </div>
