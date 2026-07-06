@@ -21,6 +21,7 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
   const [approvedQuestions, setApprovedQuestions] = useState<any[]>([]);
   const [closingRemark, setClosingRemark] = useState("");
   const [showQR, setShowQR] = useState(false);
+  const [isEventOpen, setIsEventOpen] = useState(false);
 
   const [logs, setLogs] = useState<{time: string, msg: string}[]>([
     { time: "18:00:01", msg: "Agente iniciado. Carregando modelo pt-BR_onyx." },
@@ -43,6 +44,14 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
           if (session.speakers) setSpeaker(session.speakers);
         }
 
+        const { data: eventData } = await supabase.from('events').select('personality').eq('id', eventId).single();
+        if (eventData?.personality) {
+          try {
+            const parsed = JSON.parse(eventData.personality);
+            setIsEventOpen(parsed.is_event_open === true);
+          } catch(e){}
+        }
+
         // Fetch approved questions that haven't been asked yet
         if (session) {
            const { data: qs } = await supabase.from('questions').select('*').eq('session_id', session.id).eq('status', 'approved').order('created_at', { ascending: true });
@@ -59,6 +68,26 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString('pt-PT');
     setLogs(prev => [...prev, { time, msg }]);
+  };
+
+  const toggleEventOpen = async () => {
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      const supabase = createClient((process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'), (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder'));
+      
+      const { data: eventData } = await supabase.from('events').select('personality').eq('id', eventId).single();
+      let config: any = {};
+      if (eventData?.personality) {
+        try { config = JSON.parse(eventData.personality); } catch(e){}
+      }
+      const newState = !isEventOpen;
+      config = { ...config, is_event_open: newState };
+      await supabase.from('events').update({ personality: JSON.stringify(config) }).eq('id', eventId);
+      setIsEventOpen(newState);
+      addLog(`Sala de Q&A (Público) ${newState ? 'ABERTA' : 'FECHADA'}`);
+    } catch (e) {
+      addLog("ERRO ao alterar estado da sala.");
+    }
   };
 
   const handleCommand = async (cmd: string) => {
@@ -145,9 +174,21 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
       <div className="xl:col-span-2 space-y-6">
         {/* EVENT STATE */}
         <div className="bg-slate-300/10 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-sm">
-          <h3 className="text-slate-400 text-xs font-bold mb-4 uppercase tracking-widest flex items-center gap-2">
-            <Activity className="w-4 h-4 text-indigo-400" /> Estado do Evento
-          </h3>
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+            <h3 className="text-slate-400 text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+              <Activity className="w-4 h-4 text-indigo-400" /> Estado do Evento
+            </h3>
+            <button 
+              onClick={toggleEventOpen}
+              className={`font-bold py-2 px-4 rounded-xl text-xs shadow-sm transition-colors border ${
+                !isEventOpen 
+                  ? "bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20" 
+                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20"
+              }`}
+            >
+              {!isEventOpen ? '🛑 Sala Fechada (Abrir para Público)' : '✅ Sala Aberta (Recebendo Perguntas)'}
+            </button>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {["Abertura", "Orador Atual", "Bloco de Perguntas", "Encerramento"].map(phase => (
               <button 
