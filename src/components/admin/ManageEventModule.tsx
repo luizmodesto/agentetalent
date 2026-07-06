@@ -431,7 +431,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
           managerName: managerName,
           speakerName: speakerObj?.name || 'Orador',
           action: 'intro',
-          firstQuestion: firstQuestion
+          firstQuestion: firstQuestion,
+          isFirstSpeaker: activeSessionIndex === 0
         })
       });
 

@@ -7,7 +7,7 @@ const openai = new OpenAI({
 
 export async function POST(req: Request) {
   try {
-    const { managerName, speakerName, nextSpeakerName, action, firstQuestion } = await req.json();
+    const { managerName, speakerName, nextSpeakerName, action, firstQuestion, isFirstSpeaker } = await req.json();
 
     if (!action) {
       return NextResponse.json({ error: "Missing action" }, { status: 400 });
@@ -21,16 +21,23 @@ export async function POST(req: Request) {
     
     if (action === "intro") {
       const firstQContext = firstQuestion ? `O público enviou perguntas, e a PRIMEIRA PERGUNTA é: "${firstQuestion}". Deves fazer a introdução e DEPOIS LER EXATAMENTE o texto desta primeira pergunta de forma contínua.` : "De momento não há perguntas do público na fila, faz apenas a introdução e aguarda.";
+      
+      const speakerContext = isFirstSpeaker !== false 
+        ? `- Sê breve e dinâmico. Cumprimenta o Gestor do Evento (${manager}) e agradece a passagem de palavra.
+- Faz uma breve menção ao orador (${speaker}) que é o primeiro a falar.`
+        : `- Sê muito dinâmico e mostra que já estiveste em palco antes. (Ex: "Cá estou eu novamente, ${manager}!", "De volta ao palco!", etc).
+- Introduz o novo orador deste bloco (${speaker}) com entusiasmo. Não repitas o cumprimento formal e demorado da primeira vez.`;
+
       systemPrompt = `
 Tu és um moderador virtual de eventos ao vivo, muito carismático e natural.
 Gera um pequeno texto para iniciar o bloco de perguntas.
 - O idioma é ESTRITAMENTE Português de Portugal (PT-PT). Usa "tu" formal.
-- Sê breve e dinâmico. Cumprimenta o Gestor do Evento (${manager}) e agradece a passagem de palavra.
-- Faz uma breve menção ao orador (${speaker}).
+${speakerContext}
 - Introduz a fase de perguntas do público.
 - ${firstQContext}
 - LÊ A PERGUNTA EXATAMENTE COMO FOI FORNECIDA (já foi curada por mim). Não tentes reescrever a pergunta do público.
-Exemplo de estilo: "Olá ${manager}, muito obrigado por me passares a palavra. Estou muito feliz em iniciar este debate com o ${speaker}. Vamos lá à nossa primeira pergunta: [texto exato da pergunta]"
+Exemplo de estilo para 1º orador: "Olá ${manager}, muito obrigado por me passares a palavra. Estou muito feliz em iniciar este debate com o ${speaker}. Vamos lá à nossa primeira pergunta: [texto exato da pergunta]"
+Exemplo de estilo para próximos oradores: "Olha eu aqui novamente, ${manager}! Agora vamos iniciar com o ${speaker} mais uma sequência de perguntas da nossa audiência. Então vamos lá: [texto exato da pergunta]"
 Não devolvas mais nada além da frase falada pela IA.
 `;
     } else if (action === "closing") {
