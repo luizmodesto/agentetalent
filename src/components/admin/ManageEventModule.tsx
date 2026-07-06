@@ -285,10 +285,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
       return;
     }
     
-    const { count: answeredCount } = await supabase.from('questions')
-      .select('*', { count: 'exact', head: true })
-      .eq('session_id', activeSession.id)
-      .eq('status', 'answered');
+    const answeredCount = eventConfig?.current_block_count || 0;
       
     const limit = (eventConfig.speaker_questions && eventConfig.speaker_questions[activeSession.id]) || eventConfig.max_questions || 3;
     const isLimitReached = (answeredCount || 0) >= limit;
@@ -358,6 +355,12 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
        }
        
        await triggerAISpeak(speech, nextQ.content);
+       
+       // Update block count
+       const newConfig = { ...eventConfig, current_block_count: answeredCount + 1 };
+       setEventConfig(newConfig);
+       await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+       
        await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
        addLog(`Pergunta avançada.`);
        fetchQuestions(); // Refresh UI
@@ -442,6 +445,10 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
       if (data.success && data.text) {
          addLog(`Introdução gerada com sucesso!`);
          await triggerAISpeak(data.text, firstQuestion);
+         
+         const newConfig = { ...eventConfig, current_block_count: firstQuestionId ? 1 : 0 };
+         setEventConfig(newConfig);
+         await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
          
          if (firstQuestionId) {
             await supabase.from('questions').update({ status: 'answered' }).eq('id', firstQuestionId);

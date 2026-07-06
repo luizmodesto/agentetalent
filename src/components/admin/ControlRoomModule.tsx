@@ -174,20 +174,24 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
 
       if (cmd === "Próxima pergunta") {
         setIsProcessing(true);
-        const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
+        const { data: eventData } = await supabase.from('events').select('personality').eq('id', eventId).single();
+        let eventConfig: any = {};
+        if (eventData?.personality) eventConfig = JSON.parse(eventData.personality);
         
-        const { count: answeredCount } = await supabase.from('questions').select('*', { count: 'exact', head: true }).eq('session_id', activeSession.id).eq('status', 'answered');
         const limit = maxPerguntas || 3;
+        const answeredCount = eventConfig.current_block_count || 0;
         
-        if ((answeredCount || 0) >= limit) {
+        if (answeredCount >= limit) {
            addLog("Limite de perguntas para este bloco atingido.");
            setIsProcessing(false);
            return;
         }
 
+        const { data: qs } = await supabase.from('questions').select('*').eq('session_id', activeSession.id).eq('status', 'approved').order('created_at', { ascending: true });
+
         if (qs && qs.length > 0) {
            const nextQ = qs[0];
-           const isLastQuestion = ((answeredCount || 0) + 1 >= limit) || (qs.length === 1);
+           const isLastQuestion = (answeredCount + 1 >= limit) || (qs.length === 1);
            
            const res = await fetch('/api/ai/qa-moderation', {
              method: 'POST',
@@ -203,8 +207,9 @@ export function ControlRoomModule({ eventId }: { eventId: string | null }) {
            const data = await res.json();
 
            if (data.success && data.text) {
+             const newConfig = { ...eventConfig, ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL', current_block_count: answeredCount + 1 };
              await supabase.from('events').update({
-               personality: JSON.stringify({ ai_force_speak: { text: data.text, time: Date.now() }, target_screen_id: 'ALL' })
+               personality: JSON.stringify(newConfig)
              }).eq('id', eventId);
              addLog(`Próxima Pergunta ativada.`);
              await supabase.from('questions').update({ status: 'answered' }).eq('id', nextQ.id);
