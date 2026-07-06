@@ -4,7 +4,7 @@ import path from 'path';
 
 export async function GET() {
   try {
-    const audioDir = 'F:\\desklip\\Talent\\audio';
+    const audioDir = path.join(process.cwd(), 'public', 'audio');
     
     if (!fs.existsSync(audioDir)) {
       return NextResponse.json({ files: [] });

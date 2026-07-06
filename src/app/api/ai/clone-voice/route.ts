@@ -10,7 +10,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Provedor, Chave API e Ficheiro são obrigatórios.' }, { status: 400 });
     }
 
-    const filePath = path.join('F:\\desklip\\Talent\\audio', fileName);
+    const filePath = path.join(process.cwd(), 'public', 'audio', fileName);
     if (!fs.existsSync(filePath)) {
       return NextResponse.json({ error: 'Ficheiro de áudio não encontrado no servidor.' }, { status: 404 });
     }
