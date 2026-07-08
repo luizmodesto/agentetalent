@@ -865,10 +865,10 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
             {sponsors.length > 0 ? (
               <div className="flex items-center gap-16 px-6 animate-marquee whitespace-nowrap min-w-full justify-around h-full">
                 {sponsors.map((url, i) => (
-                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-12 object-contain animate-sponsor-qa hover:grayscale-0 hover:opacity-100 hover:scale-125 transition-all" style={{ animationDelay: `${i * 1.2}s` }} />
+                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-12 object-contain animate-sponsor-qa hover:grayscale-0 hover:opacity-100 hover:scale-125 transition-all" style={{ animationDelay: (i * 1.2) + "s" }} />
                 ))}
                 {sponsors.map((url, i) => (
-                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-12 object-contain animate-sponsor-qa hover:grayscale-0 hover:opacity-100 hover:scale-125 transition-all" style={{ animationDelay: `${i * 1.2}s` }} />
+                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-12 object-contain animate-sponsor-qa hover:grayscale-0 hover:opacity-100 hover:scale-125 transition-all" style={{ animationDelay: (i * 1.2) + "s" }} />
                 ))}
               </div>
             ) : (

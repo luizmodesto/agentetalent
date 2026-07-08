@@ -786,10 +786,10 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
             {sponsors.length > 0 ? (
               <div className="flex items-center gap-10 px-6 animate-marquee whitespace-nowrap min-w-full justify-around">
                 {sponsors.map((url, i) => (
-                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-10 object-contain animate-sponsor" style={{ animationDelay: \`${i * 1.2}s\` }} />
+                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-10 object-contain animate-sponsor" style={{ animationDelay: `${i * 1.2}s` }} />
                 ))}
                 {sponsors.map((url, i) => (
-                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-10 object-contain animate-sponsor" style={{ animationDelay: \`${i * 1.2}s\` }} />
+                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-10 object-contain animate-sponsor" style={{ animationDelay: `${i * 1.2}s` }} />
                 ))}
               </div>
             ) : (
