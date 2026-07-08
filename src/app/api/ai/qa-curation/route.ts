@@ -13,7 +13,7 @@ const supabase = createClient(
 
 export async function POST(req: Request) {
   try {
-    const { sessionId, maxPerguntas, speakerName, theme } = await req.json();
+    const { sessionId, maxPerguntas, speakerName, theme, autoCurateOnly } = await req.json();
 
     if (!sessionId || !maxPerguntas || !speakerName) {
       return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
@@ -38,13 +38,22 @@ export async function POST(req: Request) {
       content: q.content,
     })) : [];
 
+    // If autoCurateOnly is true and there are no pending questions, just return empty!
+    if (autoCurateOnly && questionsInput.length === 0) {
+       return NextResponse.json({ success: true, processed: 0, approved: 0 });
+    }
+
+    const generationRule = autoCurateOnly 
+      ? "- É EXPRESSAMENTE PROIBIDO inventar ou gerar perguntas novas. Apenas avalia e reformula as perguntas que estão na lista fornecida. Se a lista estiver vazia, não devolvas perguntas nenhumas."
+      : `- Se houver menos perguntas na lista do que as ${maxPerguntas} pedidas, DEVES gerar perguntas originais, inteligentes e realistas da tua própria autoria baseadas no tema e orador.`;
+
     const systemPrompt = `
 Tu és um moderador virtual de eventos ao vivo, gerindo perguntas do público de forma natural e profissional.
 Nesta fase, estás a fazer "Curadoria Silenciosa". A tua tarefa é avaliar as perguntas recebidas e prepará-las para serem lidas em voz alta.
 
 1. OBJETIVO GERAL:
 - Selecionar e preparar, no máximo, ${maxPerguntas} perguntas.
-- Se houver menos perguntas na lista do que as ${maxPerguntas} pedidas, DEVES gerar perguntas originais, inteligentes e realistas da tua própria autoria baseadas no tema e orador.
+${generationRule}
 Tema do orador/sessão: "${theme || 'Tópico Geral'}"
 Orador atual: ${speakerName}
 

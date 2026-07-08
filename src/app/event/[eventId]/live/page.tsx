@@ -774,13 +774,22 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
 
           {/* APOIADORES */}
           <div className="h-28 shrink-0 bg-[#0a0a0a] border border-neutral-800 rounded-2xl overflow-hidden flex items-center justify-center pointer-events-auto shadow-inner relative">
+            <style dangerouslySetInnerHTML={{__html: `
+              @keyframes colorPulse {
+                0%, 100% { filter: grayscale(100%); transform: scale(1); opacity: 0.5; }
+                50% { filter: grayscale(0%); transform: scale(1.2); opacity: 1; }
+              }
+              .animate-sponsor {
+                animation: colorPulse 6s infinite ease-in-out;
+              }
+            `}} />
             {sponsors.length > 0 ? (
               <div className="flex items-center gap-10 px-6 animate-marquee whitespace-nowrap min-w-full justify-around">
                 {sponsors.map((url, i) => (
-                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-10 object-contain grayscale opacity-60" />
+                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-10 object-contain animate-sponsor" style={{ animationDelay: \`${i * 1.2}s\` }} />
                 ))}
                 {sponsors.map((url, i) => (
-                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-10 object-contain grayscale opacity-60" />
+                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-10 object-contain animate-sponsor" style={{ animationDelay: \`${i * 1.2}s\` }} />
                 ))}
               </div>
             ) : (

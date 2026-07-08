@@ -7,6 +7,137 @@ import { VoiceSettingsModule } from '@/components/admin/VoiceSettingsModule';
 import { supabase } from "@/utils/supabase/client";
 import QRCode from "react-qr-code";
 
+const ParticleNetwork = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    let particlesArray: any[] = [];
+    const numberOfParticles = Math.floor((window.innerWidth * window.innerHeight) / 15000); // Responsive density
+
+    class Particle {
+      x: number;
+      y: number;
+      size: number;
+      speedX: number;
+      speedY: number;
+      glowOffset: number;
+
+      constructor() {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.size = Math.random() * 2 + 0.5;
+        this.speedX = (Math.random() - 0.5) * 0.8;
+        this.speedY = (Math.random() - 0.5) * 0.8;
+        this.glowOffset = Math.random() * Math.PI * 2;
+      }
+
+      update() {
+        this.x += this.speedX;
+        this.y += this.speedY;
+
+        if (this.x > canvas.width) this.x = 0;
+        else if (this.x < 0) this.x = canvas.width;
+        if (this.y > canvas.height) this.y = 0;
+        else if (this.y < 0) this.y = canvas.height;
+        
+        this.glowOffset += 0.03;
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        
+        const alpha = (Math.sin(this.glowOffset) + 1) / 2; 
+        ctx.fillStyle = `rgba(52, 211, 153, ${alpha * 0.8 + 0.2})`; // emerald-400 base
+        ctx.fill();
+        
+        // Ray of light (flash effect)
+        if (alpha > 0.95) {
+           ctx.beginPath();
+           ctx.arc(this.x, this.y, this.size * 4, 0, Math.PI * 2);
+           const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size * 4);
+           grad.addColorStop(0, 'rgba(56, 189, 248, 0.8)'); // cyan flash
+           grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+           ctx.fillStyle = grad;
+           ctx.fill();
+           
+           // Light rays lines
+           ctx.beginPath();
+           ctx.moveTo(this.x - 20, this.y);
+           ctx.lineTo(this.x + 20, this.y);
+           ctx.moveTo(this.x, this.y - 20);
+           ctx.lineTo(this.x, this.y + 20);
+           ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+           ctx.lineWidth = 1;
+           ctx.stroke();
+        }
+      }
+    }
+
+    const init = () => {
+      particlesArray = [];
+      for (let i = 0; i < numberOfParticles; i++) {
+        particlesArray.push(new Particle());
+      }
+    };
+
+    const connect = () => {
+      for (let a = 0; a < particlesArray.length; a++) {
+        for (let b = a; b < particlesArray.length; b++) {
+          let distance = ((particlesArray[a].x - particlesArray[b].x) * (particlesArray[a].x - particlesArray[b].x))
+            + ((particlesArray[a].y - particlesArray[b].y) * (particlesArray[a].y - particlesArray[b].y));
+          
+          if (distance < 18000) {
+            let opacityValue = 1 - (distance / 18000);
+            ctx.strokeStyle = `rgba(14, 165, 233, ${opacityValue * 0.3})`; // cyan lines
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
+            ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
+            ctx.stroke();
+          }
+        }
+      }
+    };
+
+    let animationFrameId: number;
+    const animate = () => {
+      animationFrameId = requestAnimationFrame(animate);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < particlesArray.length; i++) {
+        particlesArray[i].update();
+        particlesArray[i].draw();
+      }
+      connect();
+    };
+
+    const resize = () => {
+       canvas.width = window.innerWidth;
+       canvas.height = window.innerHeight;
+       init();
+    };
+    
+    window.addEventListener('resize', resize);
+    init();
+    animate();
+    
+    return () => {
+       window.removeEventListener('resize', resize);
+       cancelAnimationFrame(animationFrameId);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 z-0 opacity-80 pointer-events-none" />;
+};
+
 function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = use(params);
   const [enteredCode, setEnteredCode] = useState("");
@@ -38,6 +169,9 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
   const lastAlertTimeRef = useRef<number>(0);
   const lastSpokenTextRef = useRef<string>("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  const [teleprompterAlert, setTeleprompterAlert] = useState<string | null>(null);
+  const teleprompterAlertTimeRef = useRef<number>(0);
   
   const [authorsData, setAuthorsData] = useState<{text: string, value: number}[]>([]);
   const [activeParticipants, setActiveParticipants] = useState<string[]>([]);
@@ -83,6 +217,15 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
              if (config.current_phase) setCurrentPhase(config.current_phase);
              if (config.ai_mode) setAiMode(config.ai_mode);
              if (config.ai_force_speak?.time) lastAlertTimeRef.current = config.ai_force_speak.time;
+
+             if (config.teleprompter_alert && config.teleprompter_alert_time) {
+                 teleprompterAlertTimeRef.current = config.teleprompter_alert_time;
+                 const timeSinceAlert = Date.now() - config.teleprompter_alert_time;
+                 if (timeSinceAlert < 15000) {
+                   setTeleprompterAlert(config.teleprompter_alert);
+                   setTimeout(() => setTeleprompterAlert(null), 15000 - timeSinceAlert);
+                 }
+             }
            } catch(e) {}
         }
       }
@@ -151,6 +294,12 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
                 forceAISpeak(config.ai_force_speak.text, config.ai_force_speak.questionText);
              } else {
                 console.log("Não passou no check de tempo.", config.ai_force_speak?.time, lastAlertTimeRef.current);
+             }
+
+             if (config.teleprompter_alert && config.teleprompter_alert_time && config.teleprompter_alert_time > teleprompterAlertTimeRef.current) {
+                 teleprompterAlertTimeRef.current = config.teleprompter_alert_time;
+                 setTeleprompterAlert(config.teleprompter_alert);
+                 setTimeout(() => setTeleprompterAlert(null), 15000);
              }
            } catch(e) {
              console.error("Erro no JSON.parse:", e);
@@ -469,30 +618,45 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
   if (!isEventOpen && isAuthenticated) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center p-4 font-sans relative overflow-hidden bg-[#0A0F1C]">
+        <style>{`
+          @keyframes floatLogo {
+            0% { transform: translateY(0px) scale(1); filter: drop-shadow(0 0px 15px rgba(52, 211, 153, 0.1)); }
+            50% { transform: translateY(-20px) scale(1.05); filter: drop-shadow(0 20px 30px rgba(52, 211, 153, 0.3)); }
+            100% { transform: translateY(0px) scale(1); filter: drop-shadow(0 0px 15px rgba(52, 211, 153, 0.1)); }
+          }
+          .animate-float-logo {
+            animation: floatLogo 6s ease-in-out infinite;
+          }
+        `}</style>
         <div 
           className="absolute inset-0 bg-cover bg-center opacity-40 mix-blend-screen"
           style={{ backgroundImage: "url('/waiting-bg.png')" }}
         />
+        <ParticleNetwork />
         <div className="absolute inset-0 bg-gradient-to-t from-[#0A0F1C] via-[#0A0F1C]/80 to-transparent" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-indigo-900/40 via-transparent to-[#0A0F1C]/80" />
         
-        <div className="relative z-10 flex flex-col items-center max-w-4xl w-full text-center">
-          <img src={logoUrl || "https://i.imgur.com/EpDGrzT.png"} alt="Logo do Evento" className="h-32 md:h-48 object-contain mb-8 animate-pulse drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" />
+        <div className="relative z-10 flex flex-col items-center max-w-5xl w-full text-center">
+          <img src={logoUrl || "https://i.imgur.com/EpDGrzT.png"} alt="Logo do Evento" className="h-32 md:h-56 object-contain mb-12 animate-float-logo" />
           
-          <h1 className="text-6xl md:text-8xl font-black text-white mb-6 tracking-tight drop-shadow-lg">
-            A sala vai abrir dia <br/><span className="text-emerald-400">09/07/2026</span>
+          <h1 className="text-5xl md:text-7xl font-black text-white mb-6 tracking-tight drop-shadow-2xl leading-tight">
+            Conectando Ideias, <br/><span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">Criando o Futuro.</span>
           </h1>
           
-          <p className="text-2xl md:text-3xl text-slate-300 mb-12 leading-relaxed max-w-3xl drop-shadow-md">
-            Prepare-se para uma experiência incrível. Acesse o site <a href="https://digitalent.pt" target="_blank" rel="noopener noreferrer" className="text-emerald-400 font-bold hover:text-emerald-300 underline decoration-emerald-400/30 underline-offset-4 transition-colors">digitalent.pt</a> e fique sempre atento às novidades.
+          <p className="text-xl md:text-3xl text-slate-300 mb-14 leading-relaxed max-w-4xl drop-shadow-md font-light">
+            Bem-vindo ao Digitalent'26. Acompanhe as sessões, prepare as suas perguntas e interaja em tempo real com os nossos oradores.
+            <br/><br/>
+            <span className="font-medium text-emerald-400">A inovação acontece aqui e agora. Participe!</span>
           </p>
           
-          <div className="flex items-center justify-center gap-8 bg-slate-900/60 backdrop-blur-md p-6 rounded-[2rem] border border-slate-700 shadow-2xl">
-             <div className="bg-white p-3 rounded-2xl">
-               {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/pergunta`} size={120} />}
+          <div className="flex items-center justify-center gap-8 bg-slate-900/60 backdrop-blur-xl p-6 rounded-[2.5rem] border border-slate-700/80 shadow-[0_0_40px_rgba(52,211,153,0.15)] transform transition-transform hover:scale-105 duration-500">
+             <div className="bg-white p-3 rounded-2xl shadow-inner">
+               {typeof window !== 'undefined' && <QRCode value={`${window.location.origin}/event/${eventId}/pergunta`} size={130} />}
              </div>
              <div className="text-left">
-               <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">Junte-se à fila</p>
-               <p className="font-black text-emerald-400 text-3xl uppercase">Aponte a Câmera</p>
+               <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">Garanta o seu lugar na fila</p>
+               <p className="font-black text-emerald-400 text-3xl uppercase mb-1">Aponte a Câmera</p>
+               <p className="text-xs text-slate-500 font-medium">E prepare a sua pergunta para os oradores.</p>
              </div>
           </div>
         </div>
@@ -501,8 +665,19 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
   }
 
   return (
-    <div className="h-screen w-full bg-[#1E222B] text-white flex flex-col p-6 overflow-hidden font-sans">
+    <div className="h-screen w-full bg-[#1E222B] text-white flex flex-col p-6 overflow-hidden font-sans relative">
       
+      {teleprompterAlert && (
+        <div className="absolute top-10 left-1/2 -translate-x-1/2 z-[100] w-[90%] max-w-5xl text-center">
+          <div className="bg-red-600/90 backdrop-blur-md border-4 border-red-500 rounded-3xl p-8 shadow-[0_0_80px_rgba(220,38,38,0.8)] animate-pulse">
+            <div className="text-red-200 font-bold uppercase tracking-widest text-sm mb-2 flex items-center justify-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-red-400 animate-ping"></span> ALERTA DE EMERGÊNCIA
+            </div>
+            <h2 className="text-white font-black text-4xl md:text-5xl uppercase tracking-wider">{teleprompterAlert}</h2>
+          </div>
+        </div>
+      )}
+
       <style>{wordCloudStyles}</style>
 
       {/* HEADER */}
@@ -675,16 +850,25 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
 
          {/* MARQUEE SPONSORS */}
          <div className="flex-1 bg-slate-900/40 backdrop-blur-md border border-slate-700/50 rounded-2xl overflow-hidden flex items-center shadow-lg relative">
+            <style dangerouslySetInnerHTML={{__html: `
+              @keyframes colorPulseQA {
+                0%, 100% { filter: grayscale(100%); transform: scale(1); opacity: 0.5; }
+                50% { filter: grayscale(0%); transform: scale(1.2); opacity: 1; }
+              }
+              .animate-sponsor-qa {
+                animation: colorPulseQA 6s infinite ease-in-out;
+              }
+            `}} />
             <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#1E222B] to-transparent z-10"></div>
             <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#1E222B] to-transparent z-10"></div>
             
             {sponsors.length > 0 ? (
               <div className="flex items-center gap-16 px-6 animate-marquee whitespace-nowrap min-w-full justify-around h-full">
                 {sponsors.map((url, i) => (
-                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-12 object-contain grayscale opacity-70 hover:grayscale-0 hover:opacity-100 transition-all" />
+                  <img key={i} src={url} alt={`Sponsor ${i}`} className="h-12 object-contain animate-sponsor-qa hover:grayscale-0 hover:opacity-100 hover:scale-125 transition-all" style={{ animationDelay: `${i * 1.2}s` }} />
                 ))}
                 {sponsors.map((url, i) => (
-                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-12 object-contain grayscale opacity-70" />
+                  <img key={`clone-${i}`} src={url} alt={`Sponsor Clone ${i}`} className="h-12 object-contain animate-sponsor-qa hover:grayscale-0 hover:opacity-100 hover:scale-125 transition-all" style={{ animationDelay: `${i * 1.2}s` }} />
                 ))}
               </div>
             ) : (

@@ -34,6 +34,11 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
   const [localAudioFiles, setLocalAudioFiles] = useState<string[]>([]);
   const [selectedCloneFile, setSelectedCloneFile] = useState("");
   const [isCloning, setIsCloning] = useState(false);
+  
+  const [stability, setStability] = useState(0.5);
+  const [similarity, setSimilarity] = useState(0.75);
+  const [styleExaggeration, setStyleExaggeration] = useState(0.0);
+  const [speakerBoost, setSpeakerBoost] = useState(true);
 
   useEffect(() => {
     fetch('/api/ai/audio-files').then(res => res.json()).then(data => {
@@ -77,9 +82,13 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
         if (config.openai_tone) setOpenaiTone(config.openai_tone);
         if (config.openai_rhythm) setOpenaiRhythm(config.openai_rhythm);
         if (config.openai_storytelling) setOpenaiStorytelling(config.openai_storytelling);
-        if (config.speed) setSpeed(config.speed);
-        if (config.pitch) setPitch(config.pitch);
+        if (config.speed !== undefined) setSpeed(parseFloat(config.speed));
+        if (config.pitch !== undefined) setPitch(parseFloat(config.pitch));
         if (config.gender) setGender(config.gender);
+        if (config.stability !== undefined) setStability(parseFloat(config.stability));
+        if (config.similarity !== undefined) setSimilarity(parseFloat(config.similarity));
+        if (config.style_exaggeration !== undefined) setStyleExaggeration(parseFloat(config.style_exaggeration));
+        if (config.speaker_boost !== undefined) setSpeakerBoost(config.speaker_boost);
       }
     };
     fetchConfig();
@@ -121,7 +130,11 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
             tone: openaiTone,
             rhythm: openaiRhythm,
             storytelling: openaiStorytelling,
-            language: language
+            language: language,
+            stability: stability,
+            similarity: similarity,
+            styleExaggeration: styleExaggeration,
+            speakerBoost: speakerBoost
           })
         });
 
@@ -155,7 +168,11 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
       openai_storytelling: openaiStorytelling,
       speed: speed,
       pitch: pitch,
-      gender: gender
+      gender: gender,
+      stability: stability,
+      similarity: similarity,
+      style_exaggeration: styleExaggeration,
+      speaker_boost: speakerBoost
     };
 
     const { error } = await supabase.from('events').update({
@@ -297,7 +314,11 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
             tone: openaiTone,
             rhythm: openaiRhythm,
             storytelling: openaiStorytelling,
-            language: language
+            language: language,
+            stability: stability,
+            similarity: similarity,
+            styleExaggeration: styleExaggeration,
+            speakerBoost: speakerBoost
           })
         });
 
@@ -396,23 +417,84 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
             </div>
           </div>
 
-          <div className="space-y-4">
-            <h3 className="font-semibold text-white border-b border-neutral-800 pb-2">Configurações Avançadas de Fala</h3>
+          <div className="space-y-6 bg-neutral-900/50 p-6 rounded-2xl border border-neutral-800">
+            <div>
+              <h3 className="font-bold text-white text-lg flex items-center gap-2 mb-1">
+                <Settings className="w-5 h-5 text-indigo-400" />
+                Configurações Avançadas de Fala
+              </h3>
+              <p className="text-xs text-neutral-400">Controlo profissional para moldar a emoção, o storytelling e a semelhança da IA.</p>
+            </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="flex justify-between items-center text-sm font-medium text-neutral-400 mb-2">
-                  <span>Velocidade</span>
-                  <span className="text-indigo-400">{speed}x</span>
-                </label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+              <div className="bg-[#111] p-4 rounded-xl border border-neutral-800/80 hover:border-indigo-500/30 transition-colors shadow-inner flex flex-col justify-between">
+                <div>
+                  <label className="flex justify-between items-center text-xs font-bold text-neutral-300 mb-1">
+                    <span>Velocidade de Fala</span>
+                    <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-[10px]">{speed.toFixed(1)}x</span>
+                  </label>
+                  <p className="text-[10px] text-neutral-500 mb-3 leading-tight">Ajusta o ritmo geral das sílabas.</p>
+                </div>
                 <input type="range" min="0.5" max="2.0" step="0.1" value={speed} onChange={e => setSpeed(parseFloat(e.target.value))} className="w-full accent-indigo-500" />
               </div>
-              <div>
-                <label className="flex justify-between items-center text-sm font-medium text-neutral-400 mb-2">
-                  <span>Tom (Pitch)</span>
-                  <span className="text-indigo-400">{pitch}</span>
-                </label>
+              <div className="bg-[#111] p-4 rounded-xl border border-neutral-800/80 hover:border-indigo-500/30 transition-colors shadow-inner flex flex-col justify-between">
+                <div>
+                  <label className="flex justify-between items-center text-xs font-bold text-neutral-300 mb-1">
+                    <span>Tom (Pitch)</span>
+                    <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-[10px]">{pitch.toFixed(1)}</span>
+                  </label>
+                  <p className="text-[10px] text-neutral-500 mb-3 leading-tight">Mais grave (baixo) ou mais agudo (alto).</p>
+                </div>
                 <input type="range" min="0.5" max="2.0" step="0.1" value={pitch} onChange={e => setPitch(parseFloat(e.target.value))} className="w-full accent-indigo-500" />
+              </div>
+
+              <div className="bg-[#111] p-4 rounded-xl border border-neutral-800/80 hover:border-indigo-500/30 transition-colors shadow-inner flex flex-col justify-between">
+                <div>
+                  <label className="flex justify-between items-center text-xs font-bold text-neutral-300 mb-1">
+                    <span>Estabilidade (Stability)</span>
+                    <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-[10px]">{(stability * 100).toFixed(0)}%</span>
+                  </label>
+                  <p className="text-[10px] text-neutral-500 mb-3 leading-tight">Valores baixos trazem emoção/variação. Valores altos são consistentes mas monótonos.</p>
+                </div>
+                <input type="range" min="0.0" max="1.0" step="0.01" value={stability} onChange={e => setStability(parseFloat(e.target.value))} className="w-full accent-indigo-500" />
+              </div>
+
+              <div className="bg-[#111] p-4 rounded-xl border border-neutral-800/80 hover:border-indigo-500/30 transition-colors shadow-inner flex flex-col justify-between">
+                <div>
+                  <label className="flex justify-between items-center text-xs font-bold text-neutral-300 mb-1">
+                    <span>Fidelidade à Voz Original</span>
+                    <span className="text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-[10px]">{(similarity * 100).toFixed(0)}%</span>
+                  </label>
+                  <p className="text-[10px] text-neutral-500 mb-3 leading-tight">Quanto mais alto, mais fiel à amostra de voz (pode causar artefactos).</p>
+                </div>
+                <input type="range" min="0.0" max="1.0" step="0.01" value={similarity} onChange={e => setSimilarity(parseFloat(e.target.value))} className="w-full accent-indigo-500" />
+              </div>
+
+              <div className="bg-[#111] p-4 rounded-xl border border-emerald-500/30 hover:border-emerald-400/50 transition-colors shadow-inner md:col-span-2">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-bold text-emerald-400 mb-1">
+                      <Mic className="w-4 h-4" /> Storytelling / Exagero (Style)
+                    </label>
+                    <p className="text-[10px] text-neutral-400 max-w-xl">O moderador de Storytelling. Torna a IA mais expressiva, pausada e teatral. Excelente para contar histórias.</p>
+                  </div>
+                  <span className="text-emerald-400 font-bold bg-emerald-500/10 px-3 py-1 rounded-lg text-xs">{(styleExaggeration * 100).toFixed(0)}%</span>
+                </div>
+                <input type="range" min="0.0" max="1.0" step="0.01" value={styleExaggeration} onChange={e => setStyleExaggeration(parseFloat(e.target.value))} className="w-full accent-emerald-500" />
+              </div>
+
+              <div className="md:col-span-2 flex items-center justify-between bg-[#111] p-4 rounded-xl border border-neutral-800/80 shadow-inner">
+                 <div>
+                    <p className="text-sm font-bold text-neutral-200 mb-0.5">Reforço do Orador (Speaker Boost)</p>
+                    <p className="text-[10px] text-neutral-500">Aumenta a qualidade acústica (pesado no servidor). Recomendado deixar Ativo.</p>
+                 </div>
+                 <button 
+                   type="button"
+                   onClick={() => setSpeakerBoost(!speakerBoost)}
+                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${speakerBoost ? 'bg-indigo-500' : 'bg-neutral-600'}`}
+                 >
+                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${speakerBoost ? 'translate-x-6' : 'translate-x-1'}`} />
+                 </button>
               </div>
             </div>
           </div>
@@ -697,4 +779,4 @@ export function VoiceSettingsModule({ eventId, supabase }: { eventId: string | n
   );
 }
 
-// --- MODULE C: EVENT SETTINGS (LEGACY) ---
+// --- MODULE C: EVENT SETTINGS (LEGACY) ---

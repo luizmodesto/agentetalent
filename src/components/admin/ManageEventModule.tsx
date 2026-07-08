@@ -14,6 +14,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
   const [loading, setLoading] = useState(true);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [pairingId, setPairingId] = useState("");
+  const [isVoiceSettingsOpen, setIsVoiceSettingsOpen] = useState(false);
   
   // New States
   const [sessionsList, setSessionsList] = useState<any[]>([]);
@@ -147,7 +148,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: activeSession.id,
-          maxPerguntas: eventConfig?.max_questions || 5,
+          maxPerguntas: 1,
           speakerName: speakerObj?.name || 'Orador',
           theme: speakerObj?.bio || ''
         })
@@ -165,26 +166,6 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
     setIsProcessing(false);
   };
 
-  const toggleEventOpen = async () => {
-    const newState = !eventConfig?.is_event_open;
-    const newConfig = { ...eventConfig, is_event_open: newState, target_screen_id: pairingId || null };
-    setEventConfig(newConfig);
-    const { error } = await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
-    if (error) {
-      alert("Erro ao atualizar o evento: " + error.message);
-      addLog("ERRO: Falha ao abrir/fechar evento: " + error.message);
-      return;
-    }
-    addLog(`Evento ${newState ? 'ABERTO' : 'FECHADO'} para o Público.`);
-    
-    if (!newState) {
-      triggerAIProcessing();
-    } else {
-      addLog("Modo Curadoria Silenciosa ATIVADO. Novas perguntas serão processadas em background.");
-      runSilentCuration(); // Run immediately once when opened
-    }
-  };
-
   const runSilentCuration = async () => {
      if (!eventConfig?.is_event_open) return;
      const activeSession = sessionsList.find(s => s.status === 'live');
@@ -199,7 +180,8 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
            sessionId: activeSession.id,
            maxPerguntas: eventConfig.speaker_questions?.[activeSession.id] || eventConfig.max_questions || 3,
            speakerName: speakerObj?.name || 'Orador',
-           theme: speakerObj?.bio || ''
+           theme: speakerObj?.bio || '',
+           autoCurateOnly: true
          })
        });
        fetchQuestions(); // update UI after curation
@@ -207,6 +189,21 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
        console.error("Erro na curadoria silenciosa", e);
      }
   };
+
+  const toggleEventOpen = async () => {
+    const newState = !eventConfig?.is_event_open;
+    const newConfig = { ...eventConfig, is_event_open: newState, target_screen_id: pairingId || null };
+    setEventConfig(newConfig);
+    const { error } = await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    if (error) {
+      alert("Erro ao atualizar o evento: " + error.message);
+      addLog("ERRO: Falha ao abrir/fechar evento: " + error.message);
+      return;
+    }
+    addLog(`Evento ${newState ? 'ABERTO' : 'FECHADO'} para o Público.`);
+  };
+
+
 
   const sortedSessions = [...sessionsList].sort((a, b) => {
     const seq = eventConfig?.speaker_sequence || [];
@@ -503,10 +500,24 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
   };
 
   const updateMaxQuestions = async (val: number) => {
+    // Only call this on mouse up to prevent spamming the database
     const newConfig = { ...eventConfig, max_questions: val };
-    setEventConfig(newConfig);
     await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
     addLog(`Limite de perguntas da IA alterado para: ${val}`);
+  };
+
+  const updateVoiceTone = async (tone: string) => {
+    const newConfig = { ...eventConfig, ai_voice_tone: tone };
+    setEventConfig(newConfig);
+    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    addLog(`Tom de voz da IA alterado para: ${tone}`);
+  };
+
+  const updateVoiceSettings = async (key: string, value: string) => {
+    const newConfig = { ...eventConfig, [key]: value };
+    setEventConfig(newConfig);
+    await supabase.from('events').update({ personality: JSON.stringify(newConfig) }).eq('id', eventId);
+    addLog(`Configuração avançada de voz guardada.`);
   };
 
   const activateSession = async (sessionId: string) => {
@@ -623,7 +634,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
         <div className="space-y-4 flex flex-col h-full col-span-1">
 
           {/* Sequência Oradores */}
-          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col flex-1 min-h-[300px]">
+          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col max-h-[60vh]">
             <h3 className="font-semibold text-slate-100 mb-2 flex items-center gap-2">
               <User className="w-4 h-4 text-indigo-400" /> Sequência Oradores
             </h3>
@@ -670,51 +681,86 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-5 shadow-sm">
+          <div className="flex flex-col gap-4 shrink-0">
+            <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-5 shadow-sm flex flex-col">
                <h3 className="font-semibold text-slate-100 mb-2 flex flex-col items-center justify-center text-center gap-2 text-sm">
-                 <Settings className="w-5 h-5 text-[#10B981]" /> Configurar Voz IA
+                 <Bot className="w-5 h-5 text-[#10B981]" /> Fila de IA
                </h3>
-               <p className="text-[10px] text-slate-400 mb-4 text-center leading-tight mt-3">Qtd. de perguntas para IA continuas</p>
-               <div className="flex items-center gap-2 mt-2">
+               <p className="text-[10px] text-slate-400 mb-4 text-center leading-tight flex-1">Qtd. máx. de perguntas processadas de uma vez</p>
+               <div className="flex items-center gap-2 w-full mt-auto">
                  <input 
                    type="range" min="1" max="10" step="1" 
                    value={eventConfig.max_questions || 3} 
-                   onChange={(e) => updateMaxQuestions(parseInt(e.target.value))}
-                   className="flex-1 accent-indigo-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer" 
+                   onChange={(e) => setEventConfig({ ...eventConfig, max_questions: parseInt(e.target.value) })}
+                   onMouseUp={(e) => updateMaxQuestions(parseInt((e.target as HTMLInputElement).value))}
+                   onTouchEnd={(e) => updateMaxQuestions(parseInt((e.target as HTMLInputElement).value))}
+                   className="flex-1 min-w-0 accent-indigo-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer" 
                  />
-                 <span className="text-white font-bold bg-slate-800 rounded-full w-6 h-6 flex items-center justify-center text-xs">{eventConfig.max_questions || 3}</span>
+                 <span className="text-white font-bold bg-slate-800 rounded-full w-6 h-6 shrink-0 flex items-center justify-center text-xs">{eventConfig.max_questions || 3}</span>
                </div>
             </div>
 
             <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-5 shadow-sm flex flex-col">
-               <h3 className="font-semibold text-slate-100 flex flex-col items-center justify-center text-center gap-2 text-sm mb-3">
-                 <Settings className="w-5 h-5 text-[#10B981]" /> Configurar Voz IA
+               <h3 className="font-semibold text-slate-100 flex flex-col items-center justify-center text-center gap-2 text-sm mb-2">
+                 <Mic className="w-5 h-5 text-[#10B981]" /> Personalidade
                </h3>
-               <p className="text-[10px] text-slate-400 text-center leading-tight mb-4 flex-1">Tom de voz da IA</p>
-               <div className="flex gap-2">
-                   <select className="flex-1 bg-slate-900 border border-slate-700 text-indigo-400 font-medium rounded-xl px-2 py-1.5 text-xs focus:outline-none shadow-inner text-center">
-                     <option>Natural</option>
-                     <option>Formal</option>
-                     <option>Casual</option>
+               <p className="text-[10px] text-slate-400 text-center leading-tight mb-4 flex-1">Tom de voz do apresentador IA</p>
+               <div className="flex gap-2 w-full mt-auto">
+                   <select 
+                     value={eventConfig.ai_voice_tone || 'Natural'}
+                     onChange={(e) => updateVoiceTone(e.target.value)}
+                     className="flex-1 min-w-0 bg-slate-900 border border-slate-700 text-indigo-400 font-medium rounded-xl px-2 py-1.5 text-xs focus:outline-none shadow-inner text-center"
+                   >
+                     <option value="Natural">Natural</option>
+                     <option value="Formal">Formal</option>
+                     <option value="Casual">Casual</option>
                    </select>
-                   <div className="w-8 flex items-center justify-center text-slate-400"><Mic className="w-4 h-4"/></div>
                </div>
             </div>
           </div>
           
-          <button className="w-full mt-2 bg-slate-800/80 text-slate-300 hover:text-white p-4 rounded-2xl flex items-center justify-between transition-all shadow-sm">
+          <button 
+            onClick={() => setIsVoiceSettingsOpen(!isVoiceSettingsOpen)}
+            className="w-full mt-2 bg-slate-800/80 text-slate-300 hover:text-white p-4 rounded-2xl flex items-center justify-between transition-all shadow-sm"
+          >
              <div className="flex items-center gap-2">
                  <Settings className="w-4 h-4" />
                  <span className="text-xs font-bold">Configuração Avançada da Voz</span>
              </div>
-             <ChevronDown className="w-4 h-4 -rotate-90" />
+             <ChevronDown className={`w-4 h-4 transition-transform ${isVoiceSettingsOpen ? '' : '-rotate-90'}`} />
           </button>
+
+          {isVoiceSettingsOpen && (
+            <div className="bg-[#0F172A] border border-slate-700/50 rounded-2xl p-4 mt-2 shadow-inner space-y-3">
+               <div>
+                 <label className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1 block">Voice ID (ElevenLabs)</label>
+                 <input 
+                   type="text" 
+                   placeholder="Ex: pNInz6obpgDQGcFmaJcg" 
+                   value={eventConfig.elevenlabs_voice_id || ''}
+                   onChange={(e) => updateVoiceSettings('elevenlabs_voice_id', e.target.value)}
+                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                 />
+               </div>
+               <div>
+                 <label className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-1 block">Modelo de Voz IA</label>
+                 <select 
+                   value={eventConfig.elevenlabs_model_id || 'eleven_multilingual_v2'}
+                   onChange={(e) => updateVoiceSettings('elevenlabs_model_id', e.target.value)}
+                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                 >
+                   <option value="eleven_multilingual_v2">Multilingual v2 (Recomendado)</option>
+                   <option value="eleven_monolingual_v1">Monolingual v1</option>
+                   <option value="eleven_turbo_v2">Turbo v2 (Rápido)</option>
+                 </select>
+               </div>
+            </div>
+          )}
         </div>
 
         {/* COLUNA 2: GESTÃO DA PALESTRA E IA */}
         <div className="space-y-4 flex flex-col h-full col-span-1">
-          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col relative overflow-hidden flex-1">
+          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col relative overflow-hidden">
             <div className="absolute top-0 right-0 p-4 opacity-[0.02] pointer-events-none"><Activity className="w-40 h-40" /></div>
             
             <h3 className="font-semibold text-slate-100 mb-6 flex items-center gap-2 relative z-10">
@@ -890,7 +936,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
             </div>
           </div>
 
-          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col flex-1 min-h-[260px]">
+          <div className="bg-[#111827] border border-slate-800/80 rounded-3xl p-6 shadow-sm flex flex-col max-h-[50vh]">
             <h3 className="font-semibold text-slate-100 mb-4 flex items-center gap-2">
               <TerminalSquare className="w-5 h-5 text-slate-400" /> System Logs
             </h3>
