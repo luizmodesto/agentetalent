@@ -31,8 +31,8 @@ const ParticleNetwork = () => {
       glowOffset: number;
 
       constructor() {
-        this.x = Math.random() * canvas.width;
-        this.y = Math.random() * canvas.height;
+        this.x = Math.random() * canvas!.width;
+        this.y = Math.random() * canvas!.height;
         this.size = Math.random() * 2 + 0.5;
         this.speedX = (Math.random() - 0.5) * 0.8;
         this.speedY = (Math.random() - 0.5) * 0.8;
@@ -43,41 +43,41 @@ const ParticleNetwork = () => {
         this.x += this.speedX;
         this.y += this.speedY;
 
-        if (this.x > canvas.width) this.x = 0;
-        else if (this.x < 0) this.x = canvas.width;
-        if (this.y > canvas.height) this.y = 0;
-        else if (this.y < 0) this.y = canvas.height;
+        if (this.x > canvas!.width) this.x = 0;
+        else if (this.x < 0) this.x = canvas!.width;
+        if (this.y > canvas!.height) this.y = 0;
+        else if (this.y < 0) this.y = canvas!.height;
         
         this.glowOffset += 0.03;
       }
 
       draw() {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx!.beginPath();
+        ctx!.arc(this.x, this.y, this.size, 0, Math.PI * 2);
         
         const alpha = (Math.sin(this.glowOffset) + 1) / 2; 
-        ctx.fillStyle = `rgba(52, 211, 153, ${alpha * 0.8 + 0.2})`; // emerald-400 base
-        ctx.fill();
+        ctx!.fillStyle = `rgba(52, 211, 153, ${alpha * 0.8 + 0.2})`; // emerald-400 base
+        ctx!.fill();
         
         // Ray of light (flash effect)
         if (alpha > 0.95) {
-           ctx.beginPath();
-           ctx.arc(this.x, this.y, this.size * 4, 0, Math.PI * 2);
-           const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size * 4);
+           ctx!.beginPath();
+           ctx!.arc(this.x, this.y, this.size * 4, 0, Math.PI * 2);
+           const grad = ctx!.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size * 4);
            grad.addColorStop(0, 'rgba(56, 189, 248, 0.8)'); // cyan flash
            grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-           ctx.fillStyle = grad;
-           ctx.fill();
+           ctx!.fillStyle = grad;
+           ctx!.fill();
            
            // Light rays lines
-           ctx.beginPath();
-           ctx.moveTo(this.x - 20, this.y);
-           ctx.lineTo(this.x + 20, this.y);
-           ctx.moveTo(this.x, this.y - 20);
-           ctx.lineTo(this.x, this.y + 20);
-           ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
-           ctx.lineWidth = 1;
-           ctx.stroke();
+           ctx!.beginPath();
+           ctx!.moveTo(this.x - 20, this.y);
+           ctx!.lineTo(this.x + 20, this.y);
+           ctx!.moveTo(this.x, this.y - 20);
+           ctx!.lineTo(this.x, this.y + 20);
+           ctx!.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+           ctx!.lineWidth = 1;
+           ctx!.stroke();
         }
       }
     }
@@ -89,29 +89,29 @@ const ParticleNetwork = () => {
       }
     };
 
-    const connect = () => {
+    function connect() {
       for (let a = 0; a < particlesArray.length; a++) {
         for (let b = a; b < particlesArray.length; b++) {
           let distance = ((particlesArray[a].x - particlesArray[b].x) * (particlesArray[a].x - particlesArray[b].x))
             + ((particlesArray[a].y - particlesArray[b].y) * (particlesArray[a].y - particlesArray[b].y));
           
-          if (distance < 18000) {
-            let opacityValue = 1 - (distance / 18000);
-            ctx.strokeStyle = `rgba(14, 165, 233, ${opacityValue * 0.3})`; // cyan lines
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
-            ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
-            ctx.stroke();
+          if (distance < (canvas!.width / 7) * (canvas!.height / 7)) {
+            let opacityValue = 1 - (distance / 20000);
+            ctx!.strokeStyle = `rgba(52, 211, 153, ${opacityValue * 0.15})`;
+            ctx!.lineWidth = 1;
+            ctx!.beginPath();
+            ctx!.moveTo(particlesArray[a].x, particlesArray[a].y);
+            ctx!.lineTo(particlesArray[b].x, particlesArray[b].y);
+            ctx!.stroke();
           }
         }
       }
     };
 
     let animationFrameId: number;
-    const animate = () => {
+    function animate() {
       animationFrameId = requestAnimationFrame(animate);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
       for (let i = 0; i < particlesArray.length; i++) {
         particlesArray[i].update();
         particlesArray[i].draw();
@@ -536,7 +536,7 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
       if (isCancelled || !containerRef.current) return;
       const WordCloud = mod.default || mod;
       
-      const list = authorsData.map(a => [a.text, Math.min(Math.max(a.value, 15), 45)]);
+      const list = authorsData.map(a => [a.text, Math.min(Math.max(a.value, 15), 45)] as [string, number]);
       
       const container = containerRef.current;
       Array.from(container.children).forEach(child => {

@@ -604,10 +604,10 @@ export default function SpeakerTeleprompter({ params }: { params: Promise<{ even
        setTimeout(() => {
          if (!containerRef.current) return;
          WordCloud(containerRef.current, {
-           list: authorsData.map(a => [a.text, a.value]),
+           list: authorsData.map(a => [a.text, a.value] as [string, number]),
            fontFamily: 'Impact, sans-serif',
-           weight: 'bold',
-           color: (word: string, weight: number, fontSize: number, distance: number, theta: number) => {
+           fontWeight: 'bold',
+           color: () => {
              // Seta uma variavel CSS para o angulo no span
              // A lib WordCloud.js não suporta injetar variáveis CSS diretamente pelo color, mas podemos fazê-lo num timeout
              return colors[Math.floor(Math.random() * colors.length)];

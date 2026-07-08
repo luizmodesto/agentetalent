@@ -139,8 +139,8 @@ Deves devolver a resposta num formato JSON estruturado.
       await supabase.from("questions").update({ status: "rejected" }).in("id", result.rejected);
     }
 
-    const processedIds = [...result.approved.filter(q => !q.id.startsWith('generated')).map(q => q.id), ...result.rejected];
-    const untouchedIds = questionsInput.filter(q => !processedIds.includes(q.id)).map(q => q.id);
+    const processedIds = [...result.approved.filter((q: any) => !q.id.startsWith('generated')).map((q: any) => q.id), ...result.rejected];
+    const untouchedIds = questionsInput.filter((q: any) => !processedIds.includes(q.id)).map((q: any) => q.id);
     if (untouchedIds.length > 0) {
       await supabase.from("questions").update({ status: "rejected" }).in("id", untouchedIds);
     }
