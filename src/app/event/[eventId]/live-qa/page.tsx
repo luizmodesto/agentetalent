@@ -698,3 +698,11 @@ function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
     </div>
   );
 }
+
+export default function LiveQAPage({ params }: { params: Promise<{ eventId: string }> }) {
+  return (
+    <Suspense fallback={<div className="h-screen w-full bg-[#1E222B] text-white flex items-center justify-center">A carregar...</div>}>
+      <LiveQAContent params={params} />
+    </Suspense>
+  );
+}
