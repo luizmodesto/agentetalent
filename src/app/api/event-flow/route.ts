@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 
@@ -37,14 +37,29 @@ export async function POST(request: Request) {
     const { data: session } = await supabase.from('sessions').select('*, events(*)').eq('id', sessionId).single();
     const eventContext = session ? `Contexto do Evento: ${session.events?.title || 'Unknown'}` : 'Evento ao Vivo';
 
-    if (!rawQuestions || rawQuestions.length === 0) {
-      return NextResponse.json({ message: 'Nenhuma pergunta pendente para processar.' }, { status: 200 });
+    let inputQuestions = "";
+    let isGeneratingFromPresentation = false;
+    let presentationText = "";
+
+    // Always fetch speaker presentation text
+    const { data: sessionData } = await supabase.from('sessions').select('speakers(presentation_text, bio, name)').eq('id', sessionId).single();
+    const speakerInfo = sessionData?.speakers as any;
+    
+    if (speakerInfo && (speakerInfo.presentation_text || speakerInfo.bio)) {
+      presentationText = `Nome do Orador: ${speakerInfo.name}\nBio: ${speakerInfo.bio || ''}\nTexto da Apresentação: ${speakerInfo.presentation_text || ''}`;
     }
 
-    // Format questions for AI prompt
-    const inputQuestions = rawQuestions
-      .map((q) => `[ID: ${q.id}] ${q.author_name ? `De ${q.author_name}: ` : ''}${q.content}`)
-      .join('\n');
+    if (!rawQuestions || rawQuestions.length === 0) {
+      if (presentationText) {
+        isGeneratingFromPresentation = true;
+      } else {
+        return NextResponse.json({ message: 'Nenhuma pergunta pendente e sem texto de apresentação para gerar.' }, { status: 200 });
+      }
+    } else {
+      inputQuestions = rawQuestions
+        .map((q) => `[ID: ${q.id}] ${q.author_name ? `De ${q.author_name}: ` : ''}${q.content}`)
+        .join('\n');
+    }
 
     // 2. System Prompt from the User
     const systemPrompt = `We are building a real-time AI Event Copilot system called DIGITALENT.
@@ -81,7 +96,7 @@ For each cluster:
 ## 4. GENERATE SPEAKER SUPPORT
 For each refined question generate:
 * CONTEXT: Why this question matters / How it connects to the topic
-* SUGGESTED ANSWER: Clear and concise (3-5 sentences), useful and realistic
+* SUGGESTED ANSWER: Clear and concise (3-5 sentences), useful and realistic. Base it strictly on the speaker material provided.
 * TRANSITION PHRASE: Natural phrase for the speaker to start answering
 
 ## 5. EVENT FLOW MANAGEMENT
@@ -105,6 +120,10 @@ Generate real-time guidance for the speaker:
 * Maintain natural and human tone
 * Think in real-time context (live event)`;
 
+    const userMessageContent = isGeneratingFromPresentation 
+      ? `Aqui está o contexto do evento e o texto da apresentação do orador. Como não há perguntas da plateia, crie 1 ou 2 perguntas extremamente inteligentes e engajadoras que poderiam ser feitas pela plateia com base neste conteúdo, e simule a resposta do orador baseada no material.\n\n${eventContext}\n\nMATERIAL DO ORADOR:\n${presentationText}`
+      : `Aqui está o contexto, as perguntas cruas (raw) da plateia, e o material do orador. Você deve processar as perguntas da plateia e usar o MATERIAL DO ORADOR para fornecer uma sugestão de resposta (suggested_answer) para cada pergunta refinada.\n\n${eventContext}\n\nMATERIAL DO ORADOR:\n${presentationText ? presentationText : 'Nenhum material disponível.'}\n\nPERGUNTAS:\n${inputQuestions}`;
+
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-2024-08-06',
       temperature: 0.7,
@@ -115,7 +134,7 @@ Generate real-time guidance for the speaker:
         },
         {
           role: 'user',
-          content: `Aqui estÃ¡ o contexto e as perguntas cruas (raw) da plateia para vocÃª processar:\n\n${eventContext}\n\nPERGUNTAS:\n${inputQuestions}`
+          content: userMessageContent
         }
       ],
       response_format: {
@@ -174,11 +193,25 @@ Generate real-time guidance for the speaker:
 
     const aiResult = JSON.parse(response.choices[0].message.content!);
 
-    // Note: Em produÃ§Ã£o, apÃ³s este resultado, vocÃª salvaria as "approved" na tabela, 
-    // deletaria ou marcaria as "rejected_ids" como rejeitadas,
-    // e atualizaria a sessÃ£o com o "event_flow".
+    // Se geramos da apresentação, insere diretamente como 'approved' na tabela
+    if (isGeneratingFromPresentation && aiResult.approved && aiResult.approved.length > 0) {
+      for (const generated of aiResult.approved) {
+        await supabase.from('questions').insert([{
+          session_id: sessionId,
+          content: generated.question,
+          author_name: "DIGITALENT IA",
+          status: "approved",
+          context: JSON.stringify({ 
+             openai_tone: "Corporativo", 
+             openai_rhythm: "Natural"
+          }),
+          suggested_answer: generated.suggested_answer,
+          transition: generated.transition
+        }]);
+      }
+    }
 
-    return NextResponse.json(aiResult);
+    return NextResponse.json({ success: true, ...aiResult });
 
   } catch (error: any) {
     console.error('Error in DIGITALENT Copilot:', error);

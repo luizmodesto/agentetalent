@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, use } from "react";
+import { useState, useEffect, useRef, use, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { Mic, Activity, User, QrCode, Settings } from "lucide-react";
 import { VoiceSettingsModule } from '@/components/admin/VoiceSettingsModule';
 import { supabase } from "@/utils/supabase/client";
 import QRCode from "react-qr-code";
 
-export default function LiveQAPanel({ params }: { params: Promise<{ eventId: string }> }) {
+function LiveQAContent({ params }: { params: Promise<{ eventId: string }> }) {
   const { eventId } = use(params);
   const [enteredCode, setEnteredCode] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -15,6 +16,16 @@ export default function LiveQAPanel({ params }: { params: Promise<{ eventId: str
   const [logoUrl, setLogoUrl] = useState("");
   const [buttonText, setButtonText] = useState("CONECTAR ECRÃ");
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  const searchParams = useSearchParams();
+  const codeParam = searchParams.get('code');
+
+  useEffect(() => {
+    if (codeParam && codeParam.length >= 4) {
+      setScreenId(codeParam.toUpperCase());
+      setIsAuthenticated(true);
+    }
+  }, [codeParam]);
   
   const [aiState, setAiState] = useState<"idle" | "processing" | "speaking" | "paused">("idle");
   const [currentText, setCurrentText] = useState("A aguardar interação...");

@@ -17,7 +17,7 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [selectedEventId, setSelectedEventId] = useState(initialEventId || "");
   const [formData, setFormData] = useState({
-    id: "", name: "", specialty: "", company: "", role: "", email: "", contact: "", website: "", bio: "", photo_url: ""
+    id: "", name: "", specialty: "", company: "", role: "", email: "", contact: "", website: "", bio: "", photo_url: "", presentation_text: ""
   });
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -47,14 +47,14 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
       if (isEditing) {
         const { error } = await supabase.from('speakers').update({
           name: formData.name, role: formData.role, bio: formData.bio, specialty: formData.specialty,
-          company: formData.company, email: formData.email, contact: formData.contact, website: formData.website, photo_url: formData.photo_url
+          company: formData.company, email: formData.email, contact: formData.contact, website: formData.website, photo_url: formData.photo_url, presentation_text: formData.presentation_text
         }).eq('id', formData.id);
         if (error) throw error;
         setStatus({ type: 'success', msg: "Orador atualizado com sucesso!" });
       } else {
         const { data: spk, error: spkErr } = await supabase.from('speakers').insert([{
           name: formData.name, role: formData.role, bio: formData.bio, specialty: formData.specialty,
-          company: formData.company, email: formData.email, contact: formData.contact, website: formData.website, photo_url: formData.photo_url
+          company: formData.company, email: formData.email, contact: formData.contact, website: formData.website, photo_url: formData.photo_url, presentation_text: formData.presentation_text
         }]).select();
 
         if (spkErr) throw spkErr;
@@ -67,7 +67,7 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
         setStatus({ type: 'success', msg: "Orador cadastrado com sucesso!" });
       }
 
-      setFormData({ id: "", name: "", specialty: "", company: "", role: "", email: "", contact: "", website: "", bio: "", photo_url: "" });
+      setFormData({ id: "", name: "", specialty: "", company: "", role: "", email: "", contact: "", website: "", bio: "", photo_url: "", presentation_text: "" });
       setIsEditing(false);
       fetchSpeakers();
     } catch (err: any) {
@@ -81,7 +81,7 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
   const handleEdit = (spk: any) => {
     setFormData({
       id: spk.id, name: spk.name || "", specialty: spk.specialty || "", company: spk.company || "", role: spk.role || "",
-      email: spk.email || "", contact: spk.contact || "", website: spk.website || "", bio: spk.bio || "", photo_url: spk.photo_url || ""
+      email: spk.email || "", contact: spk.contact || "", website: spk.website || "", bio: spk.bio || "", photo_url: spk.photo_url || "", presentation_text: spk.presentation_text || ""
     });
     setIsEditing(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -116,7 +116,7 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
   };
 
   const cancelEdit = () => {
-    setFormData({ id: "", name: "", specialty: "", company: "", role: "", email: "", contact: "", website: "", bio: "", photo_url: "" });
+    setFormData({ id: "", name: "", specialty: "", company: "", role: "", email: "", contact: "", website: "", bio: "", photo_url: "", presentation_text: "" });
     setIsEditing(false);
   };
 
@@ -211,6 +211,21 @@ export function RegisterSpeakerModule({ eventId: initialEventId, supabase }: { e
                   rows={4}
                   className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors" 
                   placeholder="Descreva o currículo do orador..." 
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-neutral-400 mb-1.5 flex justify-between">
+                  <span>Texto da Apresentação</span>
+                  <span className="text-xs text-indigo-400">Conteúdo para a IA carregar!</span>
+                </label>
+                <textarea 
+                  name="presentation_text"
+                  value={formData.presentation_text} 
+                  onChange={handleChange} 
+                  rows={6}
+                  className="w-full bg-[#1a1a1a] border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors" 
+                  placeholder="Insira aqui o texto completo da apresentação do orador..." 
                 />
               </div>
             </div>

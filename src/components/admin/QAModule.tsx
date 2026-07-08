@@ -105,8 +105,7 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
          openai_tone: tone, 
          openai_rhythm: rhythm
       });
-
-      await supabase.from('questions').update({ 
+      await supabase.from('questions').update({ 
         status: 'approved',
         content: fastData.refined_question,
         context: metadata,
@@ -124,8 +123,19 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
     fetchQuestions();
   };
 
+  const handleDeleteFromQueue = async (id: number) => {
+    await supabase.from('questions').delete().eq('id', id);
+    fetchQuestions();
+  };
+
+  const handleClearQueue = async () => {
+    if (!confirm("Tem certeza que deseja apagar todas as perguntas da Fila de Espera Ativa?")) return;
+    const ids = activeQueue.map(q => q.id);
+    await supabase.from('questions').delete().in('id', ids);
+    fetchQuestions();
+  };
+
   const processWithAI = async () => {
-    if (rawQuestions.length === 0) return;
     setIsProcessingAI(true);
     try {
       const res = await fetch('/api/event-flow', {
@@ -134,11 +144,11 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
         body: JSON.stringify({ eventId })
       });
       const data = await res.json();
-      if (data.success) {
+      if (data.success || data.approved) {
         alert("Inteligência Artificial processou as perguntas com sucesso!");
         fetchQuestions();
       } else {
-        alert("Erro na IA: " + data.error);
+        alert("Erro na IA: " + (data.error || "Erro desconhecido"));
       }
     } catch (error) {
       console.error(error);
@@ -150,7 +160,6 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
   const simulateIncoming = async () => {
     if (!newQuestion.trim()) return;
     
-    // Pega a primeira sessão do evento para vincular a pergunta
     const { data: sessions } = await supabase.from('sessions').select('id').eq('event_id', eventId).limit(1);
     if (!sessions || sessions.length === 0) {
       alert("Crie primeiro uma Sessão para este evento na aba de Controle/Configurações.");
@@ -166,8 +175,7 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      {/* INBOX */}
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
       <div className="bg-[#111] border border-neutral-800 rounded-2xl flex flex-col h-[700px]">
         <div className="p-6 border-b border-neutral-800 flex justify-between items-center">
           <h3 className="font-semibold text-white flex items-center gap-2">
@@ -176,11 +184,11 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
           </h3>
           <button 
             onClick={processWithAI} 
-            disabled={isProcessingAI || rawQuestions.length === 0}
+            disabled={isProcessingAI}
             className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium py-2 px-4 rounded-lg flex items-center gap-2 transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-50"
           >
             <Bot className="w-4 h-4" /> 
-            {isProcessingAI ? "Processando com DIGITALENT..." : "Processar com DIGITALENT"}
+            {isProcessingAI ? "Processando..." : "Processar com DIGITALENT"}
           </button>
         </div>
         
@@ -207,13 +215,13 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
               <div className="flex-1">
                 <p className="text-sm text-white mb-2">&quot;{q.content}&quot;</p>
                 <div className="flex flex-col gap-1">
-        <span className="text-xs text-neutral-500">De: {q.author_name}</span>
-        {q.session?.speakers?.name && (
-        <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded w-max border border-emerald-500/20">
-            Para o orador: {q.session.speakers.name}
-        </span>
-        )}
-    </div>
+                  <span className="text-xs text-neutral-500">De: {q.author_name}</span>
+                  {q.session?.speakers?.name && (
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded w-max border border-emerald-500/20">
+                        Para o orador: {q.session.speakers.name}
+                    </span>
+                  )}
+                </div>
                 {q.ai_score && <span className="ml-2 text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded">Score IA: {q.ai_score}/10</span>}
                 
                 {fastAssistCache[q.id]?.loading && (
@@ -258,26 +266,41 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
             <PlayCircle className="w-5 h-5 text-emerald-500" />
             Fila de Espera Ativa ({activeQueue.length})
           </h3>
+          {activeQueue.length > 0 && (
+            <button 
+              onClick={handleClearQueue}
+              className="text-xs text-red-400 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
+            >
+              <Trash2 className="w-3 h-3" /> Limpar Tudo
+            </button>
+          )}
         </div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {activeQueue.map((q, i) => (
-            <div key={q.id} className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 flex gap-4 relative overflow-hidden">
+            <div key={q.id} className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 flex gap-4 relative overflow-hidden group">
               <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500"></div>
               <div className="flex flex-col items-center justify-center bg-indigo-500/10 text-indigo-400 font-bold rounded-lg w-10 h-10 shrink-0">
                 {i + 1}
               </div>
-              <div>
+              <div className="flex-1">
                 <p className="text-sm text-white mb-2 font-medium">{q.content}</p>
                 <div className="flex flex-col gap-1">
-        <span className="text-xs text-neutral-500">De: {q.author_name}</span>
-        {q.session?.speakers?.name && (
-        <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded w-max border border-emerald-500/20">
-            Para o orador: {q.session.speakers.name}
-        </span>
-        )}
-    </div>
+                  <span className="text-xs text-neutral-500">De: {q.author_name}</span>
+                  {q.session?.speakers?.name && (
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded w-max border border-emerald-500/20">
+                      Para o orador: {q.session.speakers.name}
+                    </span>
+                  )}
+                </div>
               </div>
+              <button 
+                onClick={() => handleDeleteFromQueue(q.id)} 
+                className="p-2 text-neutral-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors h-max opacity-0 group-hover:opacity-100"
+                title="Apagar pergunta"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
           ))}
           {activeQueue.length === 0 && (
@@ -291,4 +314,4 @@ export function QAModule({ eventId, supabase }: { eventId: string | null, supaba
   );
 }
 
-// --- MODULE: VOICE SETTINGS (ELEVENLABS + NATIVE) ---
+// --- MODULE: VOICE SETTINGS (ELEVENLABS + NATIVE) ---

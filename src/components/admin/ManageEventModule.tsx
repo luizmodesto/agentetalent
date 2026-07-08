@@ -607,7 +607,7 @@ export function ManageEventModule({ eventId, supabase, onBack }: { eventId: stri
                   Ecrã Padrão
                   <ExternalLink className="w-3 h-3 text-slate-400" />
                 </a>
-                <a href={`/event/${eventId}/live-qa`} target="_blank" rel="noopener noreferrer" className="px-4 py-3 text-sm text-indigo-400 hover:bg-slate-700 transition-colors font-medium flex justify-between items-center" onClick={() => setIsDropdownOpen(false)}>
+                <a href={`/event/${eventId}/live-qa?code=${pairingId}`} target="_blank" rel="noopener noreferrer" className="px-4 py-3 text-sm text-indigo-400 hover:bg-slate-700 transition-colors font-medium flex justify-between items-center" onClick={() => setIsDropdownOpen(false)}>
                   Painel Q&A
                   <ExternalLink className="w-3 h-3 text-indigo-500" />
                 </a>
